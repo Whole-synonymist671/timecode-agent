@@ -1,0 +1,90 @@
+[project]
+name = "video-agent"
+version = "0.1.0"
+description = "Transcript-first, lazily-verified video understanding toolkit for LLM agents"
+readme = "docs/public/README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "mupozg823" }]
+keywords = ["video", "agents", "transcription", "provenance", "editing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "faster-whisper>=1.0.0",
+    "mlx-whisper>=0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
+    "numpy",
+    "ocrmac>=1.0; sys_platform == 'darwin'",
+    "opentimelineio>=0.17",
+    "pyannote.audio>=3.1,<5",
+    "pyobjc-framework-SoundAnalysis>=10.0; sys_platform == 'darwin'",
+    "sherpa-onnx==1.13.4",
+    "sherpa-onnx-core==1.13.4",
+]
+
+[project.urls]
+Repository = "https://github.com/mupozg823/timecode-agent"
+Issues = "https://github.com/mupozg823/timecode-agent/issues"
+
+[project.scripts]
+va = "video_agent.cli:main"
+tca = "video_agent.cli:main"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.9",
+    "pytest>=8.0",
+    "pillow>=10.0",
+    "pyyaml>=6.0",
+    "ruff>=0.8",
+    "yt-dlp>=2025.1.1",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/W(pycodestyle) + F(pyflakes) + I(import order) — 현재 코드베이스 전체 통과 기준
+select = ["E", "W", "F", "I"]
+
+[tool.basedpyright]
+include = ["src"]
+exclude = [".venv", "**/__pycache__", "build", "dist"]
+pythonVersion = "3.12"
+pythonPlatform = "Linux"
+typeCheckingMode = "standard"
+baselineFile = ".basedpyright/baseline.json"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/video_agent"]
+
+[tool.hatch.build.targets.sdist]
+only-include = [
+    "assets/brand",
+    "benchmarks/fixtures_public.json",
+    "benchmarks/golden-public.json",
+    "benchmarks/run_bench.py",
+    "docs/public",
+    "scripts/install.sh",
+    "skill",
+    "src",
+    "tests",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: real whisper transcription (downloads model)"]
+addopts = "-m 'not slow'"

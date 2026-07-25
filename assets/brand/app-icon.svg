@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="timecode:agent app icon">
+  <title>timecode:agent</title>
+  <rect width="512" height="512" rx="114" fill="#0F100F"/>
+  <g transform="translate(112 112) scale(0.9028)" fill="none" stroke="#F3F4F2" stroke-width="25" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M67.5 23.5H37.5A14 14 0 0 0 23.5 37.5V67.5"/>
+    <path d="M220.5 23.5h30a14 14 0 0 1 14 14V67.5"/>
+    <path d="M23.5 220.5v30a14 14 0 0 0 14 14H67.5"/>
+    <path d="M264.5 220.5v30a14 14 0 0 1-14 14H220.5"/>
+  </g>
+  <g transform="translate(112 112) scale(0.9028)">
+    <circle cx="144" cy="100.5" r="30" fill="#5AC478"/>
+    <circle cx="144" cy="186.5" r="30" fill="#5AC478"/>
+  </g>
+</svg>

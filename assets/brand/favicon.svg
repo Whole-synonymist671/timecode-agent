@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="timecode:agent">
+  <title>timecode:agent</title>
+  <rect width="64" height="64" rx="14" fill="#0F100F"/>
+  <g fill="none" stroke="#F3F4F2" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M23 13h-6a4 4 0 0 0-4 4v6"/>
+    <path d="M41 13h6a4 4 0 0 1 4 4v6"/>
+    <path d="M13 41v6a4 4 0 0 0 4 4h6"/>
+    <path d="M51 41v6a4 4 0 0 1-4 4h-6"/>
+  </g>
+  <circle cx="32" cy="25" r="7" fill="#5AC478"/>
+  <circle cx="32" cy="42" r="7" fill="#5AC478"/>
+</svg>

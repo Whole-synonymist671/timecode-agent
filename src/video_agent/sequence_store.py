@@ -1,0 +1,174 @@
+"""POSIX-safe append-only storage for edit-decision sequences."""
+
+from __future__ import annotations
+
+import json
+import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
+
+from .sequence_grounding import (
+    GroundingSnapshot,
+    checkpoint_grounding_snapshot,
+    pin_terminal_revisions,
+    validate_terminal_grounding,
+)
+from .sequence_schema import (
+    SEQUENCE_SCHEMA_VERSION,
+    SequenceValidationError,
+    validate_sequence_object,
+)
+from .workspace import Workspace
+from .workspace_lock import stable_workspace_lock
+
+
+def sequences_path(ws: Workspace) -> Path:
+    return ws.root / "sequences.jsonl"
+
+
+@contextmanager
+def _sequence_lock(ws: Workspace, *, exclusive: bool) -> Iterator[None]:
+    with stable_workspace_lock(
+        ws.root,
+        ws.sequence_lock_path,
+        exclusive=exclusive,
+    ):
+        yield
+
+
+def _validate_sequence(
+    ws: Workspace,
+    obj: object,
+    *,
+    prior: dict | None,
+    snapshot: GroundingSnapshot,
+    legacy_compat: bool = False,
+    replay: bool = False,
+) -> dict:
+    checkpoints_by_id, unsupported_ids = snapshot
+    sequence = validate_sequence_object(
+        ws,
+        obj,
+        prior=prior,
+        known_checkpoints=set(checkpoints_by_id),
+        legacy_compat=legacy_compat,
+    )
+    # 근거 게이트·리비전 고정은 쓰기 시점의 것이다. replay에서 리비전이
+    # 고정된 라인은 쓰기 게이트를 이미 통과한 역사적 사실이라 현재
+    # 체크포인트 상태로 재판정하지 않는다 — 재판정하면 드리프트가 심할수록
+    # 라인이 corrupt 취급으로 소실되어 드리프트 경고 대상 자체가 사라진다.
+    # 무핀 레거시 라인만 종전대로 현재 근거를 재검증한다.
+    if not replay:
+        validate_terminal_grounding(
+            sequence, checkpoints_by_id, unsupported_ids
+        )
+        pin_terminal_revisions(sequence, checkpoints_by_id, prior=prior)
+    elif not isinstance(sequence.get("checkpoint_revisions"), dict):
+        validate_terminal_grounding(
+            sequence, checkpoints_by_id, unsupported_ids
+        )
+    return sequence
+
+
+def _prior_for(obj: object, latest: list[dict]) -> dict | None:
+    if not isinstance(obj, dict) or not isinstance(obj.get("id"), str):
+        return None
+    return {sequence["id"]: sequence for sequence in latest}.get(obj["id"])
+
+
+def validate_sequence(ws: Workspace, obj: object) -> dict:
+    """Validate without writing against one locked cross-ledger snapshot."""
+    with _sequence_lock(ws, exclusive=False):
+        with checkpoint_grounding_snapshot(ws) as snapshot:
+            latest = _load_sequences_unlocked(ws, snapshot)
+            return _validate_sequence(
+                ws,
+                obj,
+                prior=_prior_for(obj, latest),
+                snapshot=snapshot,
+            )
+
+
+def append_sequence(ws: Workspace, obj: object) -> dict:
+    """Validate and append while sequence and checkpoint snapshots are locked."""
+    with _sequence_lock(ws, exclusive=True):
+        with checkpoint_grounding_snapshot(ws) as snapshot:
+            latest = _load_sequences_unlocked(ws, snapshot)
+            sequence = _validate_sequence(
+                ws,
+                obj,
+                prior=_prior_for(obj, latest),
+                snapshot=snapshot,
+            )
+            path = sequences_path(ws)
+            prefix = "\n" if _missing_trailing_newline(path) else ""
+            with path.open("a", encoding="utf-8") as ledger:
+                ledger.write(
+                    prefix + json.dumps(sequence, ensure_ascii=False) + "\n"
+                )
+            return sequence
+
+
+def _missing_trailing_newline(path: Path) -> bool:
+    """직전 기록이 개행 없이 끝났으면 새 레코드 앞에 개행이 필요하다."""
+    if not (path.is_file() and path.stat().st_size):
+        return False
+    with path.open("rb") as ledger:
+        ledger.seek(-1, 2)
+        return ledger.read(1) not in (b"\n", b"\r")
+
+
+def _load_sequences_unlocked(
+    ws: Workspace, snapshot: GroundingSnapshot
+) -> list[dict]:
+    path = sequences_path(ws)
+    if not path.is_file():
+        return []
+    latest: dict[str, dict] = {}
+    for line_number, line in enumerate(path.read_bytes().splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line.decode("utf-8"))
+            if not isinstance(obj, dict):
+                raise SequenceValidationError(
+                    "sequence line must contain a JSON object"
+                )
+            raw_id = obj.get("id")
+            prior = latest.get(raw_id) if isinstance(raw_id, str) else None
+            legacy_compat = (
+                obj.get("schema_version") is None
+                and not (
+                    prior
+                    and prior.get("schema_version")
+                    == SEQUENCE_SCHEMA_VERSION
+                )
+            )
+            sequence = _validate_sequence(
+                ws,
+                obj,
+                prior=prior,
+                snapshot=snapshot,
+                legacy_compat=legacy_compat,
+                replay=True,
+            )
+            latest[sequence["id"]] = sequence
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            SequenceValidationError,
+        ):
+            print(
+                f"warning: skipping corrupt sequences.jsonl line {line_number}",
+                file=sys.stderr,
+            )
+    return list(latest.values())
+
+
+def load_sequences(ws: Workspace) -> list[dict]:
+    """Return latest valid revisions under sequence and checkpoint locks."""
+    with _sequence_lock(ws, exclusive=False):
+        with checkpoint_grounding_snapshot(ws) as snapshot:
+            return _load_sequences_unlocked(ws, snapshot)

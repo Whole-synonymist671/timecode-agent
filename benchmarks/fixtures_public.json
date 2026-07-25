@@ -1,0 +1,26 @@
+[
+ {
+  "name": "ed",
+  "slot": "visual-led",
+  "filename": "elephants-dream_1024_512kb.mp4",
+  "url": "https://archive.org/download/ElephantsDream/ed_1024_512kb.mp4",
+  "license": "CC-BY 2.5 — (c) 2006 Blender Foundation / Netherlands Media Art Institute, orange.blender.org",
+  "note": "대사 있는 단편(10:53)이나 발화 밀도 낮음 — 실측 모드=시각 주도. 발화 주도 공개 슬롯은 CC 강연 영상으로 추후 보강"
+ },
+ {
+  "name": "sintel-trailer",
+  "slot": "visual-led",
+  "filename": "sintel_trailer-1080p.mp4",
+  "url": "https://download.blender.org/durian/trailer/sintel_trailer-1080p.mp4",
+  "license": "CC-BY 3.0 — (c) copyright Blender Foundation, durian.blender.org",
+  "note": "액션 몽타주 트레일러(0:52), 발화 희소 — 시각 주도 슬롯"
+ },
+ {
+  "name": "bbb-trailer",
+  "slot": "silent",
+  "filename": "big-buck-bunny_trailer_480p.mov",
+  "url": "https://download.blender.org/peach/trailer/trailer_480p.mov",
+  "license": "CC-BY 3.0 — (c) copyright 2008 Blender Foundation, peach.blender.org",
+  "note": "무대사 트레일러(0:33) — 무발화 슬롯"
+ }
+]

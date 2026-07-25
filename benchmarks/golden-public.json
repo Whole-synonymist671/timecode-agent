@@ -1,0 +1,50 @@
+{
+ "ed": {
+  "segments_range": [
+   62,
+   99
+  ],
+  "scenes_range": [
+   106,
+   165
+  ],
+  "highlights_range": [
+   2,
+   8
+  ],
+  "mode_head": "시각 주도",
+  "readiness": "cover_gaps"
+ },
+ "sintel-trailer": {
+  "segments_range": [
+   0,
+   4
+  ],
+  "scenes_range": [
+   6,
+   15
+  ],
+  "highlights_range": [
+   2,
+   8
+  ],
+  "mode_head": "시각 주도",
+  "readiness": "cover_gaps"
+ },
+ "bbb-trailer": {
+  "segments_range": [
+   0,
+   2
+  ],
+  "scenes_range": [
+   8,
+   17
+  ],
+  "highlights_range": [
+   2,
+   8
+  ],
+  "mode_head": "무발화",
+  "readiness": "cover_gaps"
+ }
+}
