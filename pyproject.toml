@@ -74,6 +74,7 @@ packages = ["src/video_agent"]
 [tool.hatch.build.targets.sdist]
 only-include = [
     "assets/brand",
+    "assets/screenshots",
     "benchmarks/fixtures_public.json",
     "benchmarks/golden-public.json",
     "benchmarks/run_bench.py",

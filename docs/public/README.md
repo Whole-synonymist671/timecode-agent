@@ -16,12 +16,30 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/)
 [![Media local by default](https://img.shields.io/badge/media-local%20by%20default-orange.svg)](#requirements)
 
+**English** · [한국어](README.ko.md)
+
 </div>
 
 TIMECODE-AGENT helps coding agents turn long video into a local, reusable
-evidence ledger. It starts from transcript and deterministic signals, inspects
-selected moments when a claim needs visual confirmation, and preserves the
-result for later questions, clips, wiki pages, and editorial handoff.
+evidence ledger.
+
+- **Transcript first.** Ingest produces a timestamped transcript (reusing the
+  uploader's captions when they exist) plus deterministic placement signals —
+  scenes, audio energy, OCR, faces — before any frame is sent to a model.
+- **Lazy visual verification.** The coding agent inspects only the moments
+  where a claim needs visual confirmation, and records what it verified as
+  time-addressed checkpoints instead of a one-shot answer.
+- **Evidence that persists.** Checkpoints, capture provenance, and edit
+  decisions live in append-only ledgers; indexes, a static corpus browser,
+  and wiki pages are rebuildable projections over them.
+- **Grounded editorial handoff.** EDL, FCPXML, and OTIO exports are derived
+  from recorded checkpoints or a pinned sequence — not from an unstored
+  model reply; clip extraction and SRT rendering are supporting utilities
+  that work on any span or the full transcript.
+
+Typical uses: answering questions about long footage without re-watching it,
+cutting highlights or shorts with receipts for every cut, and growing a
+searchable corpus and wiki across many videos.
 
 ## Quickstart
 
@@ -49,8 +67,22 @@ before any grounded edit is exported.
   speech catches faster-whisper's nondeterministic mid-video stalls and
   re-transcribes once with safer settings; see the
   [case study](#case-study-a-silent-transcription-stall).
+- **All-on runtime with a policy layer** — every capability installs by
+  default; `va runtime` inspects and switches ASR backend, clip encoder, and
+  feature toggles without reinstalling. Includes an MLX ASR adapter for Apple
+  Silicon in the `low-power` profile.
+- **Redesigned corpus browser** — `va view` now ships a dark-first library
+  with search, sortable density tables, a hand-rolled canvas relation graph,
+  and a sticky two-column workspace player; see
+  [What it looks like](#what-it-looks-like).
+- **Named workflows** — the four everyday command chains carry names in the
+  Agent Skill (Dailies, Script Supervisor, the Eisenstein Cut, the Langlois
+  Archive); see [Usage](#usage).
+- **Experimental Windows support** — the workspace lock has an `msvcrt`
+  fallback and CI runs a Windows smoke job; see
+  [Requirements](#requirements).
 
-Both shipped to `main`; there is no version tag yet, so this README refers to
+All shipped to `main`; there is no version tag yet, so this README refers to
 them by what they do rather than a release number.
 
 ---
@@ -147,6 +179,26 @@ The values are illustrative; use the span and evidence established for your
 own video. The final command fails this example check if the EDL contains no
 edit event. For revision-pinned, machine-gated multi-cut delivery, record a
 terminal sequence and export it with `--sequence`.
+
+## What it looks like
+
+`va view` writes a self-contained static corpus browser and per-video
+players — single HTML files, no server and no frontend framework. The pages
+follow the OS color scheme; dark mode is shown here.
+
+| Corpus library — search, type, status, scene counts | Relation graph — videos ↔ people and entities |
+|---|---|
+| ![Corpus library list view with search, per-video type and verification status](assets/screenshots/corpus-browser.jpg) | ![Canvas relation graph connecting videos to recorded entities](assets/screenshots/corpus-graph.jpg) |
+
+| Workspace player — scene records beside the video | Timeline strip and verified scene cards |
+|---|---|
+| ![Sintel trailer workspace player with checkpoint cards and active-span highlight](assets/screenshots/player-sintel.jpg) | ![Elephants Dream workspace player with coverage timeline and confidence-labeled scene records](assets/screenshots/player-elephants-dream.jpg) |
+
+The screenshots show a demo corpus built by running the tool on the Blender
+Foundation open movies *Sintel*, *Elephants Dream*, and *Big Buck Bunny*
+(CC-BY, © Blender Foundation — [blender.org](https://www.blender.org/about/projects/)) —
+the same freely fetchable fixtures the
+[reproducible benchmark](#reproducible-benchmark) uses.
 
 ## What persists
 
@@ -393,6 +445,10 @@ one 0.809 (0.309 above it) — not a hair's-width threshold call on this input.
 - `ffmpeg` and `ffprobe` on `PATH`
 - `yt-dlp` for URL ingest
 - A coding-agent harness that can discover the included Agent Skill
+- Windows is experimental: the core CLI, ledgers, and workspace locking run
+  (shared locks degrade to exclusive via `msvcrt`), a CI smoke job exercises
+  install → import → lock round-trip → CLI startup, and the Apple-backed
+  cues (OCR, faces, semantic audio events) are unavailable as on Linux
 
 | Dependency | macOS | Linux |
 |---|---|---|
@@ -503,6 +559,22 @@ va ingest "https://instagram.com/reel/..." --cookies-from-browser chrome -o va-o
 Ask questions through your coding agent (the Agent Skill below), then come
 back to the same workspace later with `va search "<terms>"` and
 `va brief <workspace>` — stored artifacts answer before any re-inspection.
+Open the corpus browser any time with `va view` (writes `va-out/view.html`).
+
+### Named workflows
+
+The Agent Skill names the four everyday command chains after film-studio
+roles, so a request can be routed without memorizing flag combinations:
+
+| Workflow | What it does | Command chain |
+|---|---|---|
+| **Dailies** (데일리스) | first development of new footage | `va ingest --signals` → `va brief` |
+| **Script Supervisor** (스크립터) | recall over an existing corpus — no re-ingest | `va search` → `va brief <workspace>` |
+| **Eisenstein Cut** (에이젠슈테인 컷) | evidence-gated highlight / shorts assembly | `va highlights` → `va sequence add` → `va boundary-eval` → `va clip` / `va reframe` → `va export` |
+| **Langlois Archive** (랑글루아 서고) | knowledge projection over the corpus | `va index` → `va wiki` → `va view` → `va bridge` |
+
+Saying "run the dailies on this file" or "Eisenstein cut, 9:16" to a harness
+with the skill installed resolves to these chains.
 
 ## Agent Skill
 
@@ -594,6 +666,10 @@ fixtures, not a source of performance claims either.
 
 MIT — see [LICENSE](LICENSE). Benchmark fixtures are CC-licensed Blender
 Foundation open movies fetched at benchmark time; no third-party media ships
-in this repository. Every image file in this repository is either brand
-artwork under `assets/brand/` or a synthetic fixture rendered locally by
-`scripts/render_homepage_preview_fixture.py`.
+in this repository beyond the attributed interface screenshots. Every image
+file in this repository is one of: brand artwork under `assets/brand/`, a
+synthetic fixture rendered locally by
+`scripts/render_homepage_preview_fixture.py`, or an interface screenshot
+under `assets/screenshots/` whose visible video frames come from the CC-BY
+Blender Foundation open movies credited in
+[What it looks like](#what-it-looks-like).
