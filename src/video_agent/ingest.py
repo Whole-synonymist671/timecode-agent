@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import threading
 from contextlib import contextmanager
 from dataclasses import asdict, replace
 from pathlib import Path
@@ -43,6 +44,20 @@ from .ingest_transcribe import resegment_by_words as resegment_by_words
 from .ingest_transcribe import segments_from_whisper as segments_from_whisper
 from .workspace import Workspace
 from .workspace_lock import stable_workspace_lock
+
+
+class _AsrBackendTrace(threading.local):
+    """직전 _transcribe가 실제로 쓴 백엔드 — "mlx" | "faster-whisper" |
+    "faster-whisper(mlx-fallback)". 반환 계약(3-튜플)에 실을 수 없는 이유:
+    테스트·외부 호출자 다수가 `ingest._transcribe`를 3-튜플 fake로 패치한다.
+    오케스트레이션이 호출 직후 읽어 최종 채택 전사에 결박하는 out-of-band
+    슬롯이며, thread-local이라 같은 프로세스의 병렬 ingest()가 서로의
+    라벨을 덮지 않는다. fake 경로는 슬롯을 안 채우므로 None."""
+
+    label: str | None = None
+
+
+_ASR_TRACE = _AsrBackendTrace()
 
 
 def _transcribe(
@@ -78,30 +93,36 @@ def _transcribe(
     if requested is not ASRBackend.AUTO:
         config = replace(config, asr_backend=requested)
     selected = resolve_asr_backend(config)
+    fallback_label = "faster-whisper"
     if selected is ASRBackend.MLX:
         from .asr_mlx import transcribe_mlx
 
         try:
-            return transcribe_mlx(
+            result = transcribe_mlx(
                 wav,
                 model,
                 lang,
                 hotwords,
                 condition_on_previous_text=condition_on_previous_text,
             )
+            _ASR_TRACE.label = "mlx"
+            return result
         except (ImportError, OSError, RuntimeError, ValueError) as exc:
             print(
                 "MLX Whisper 품질/실행 가드 → faster-whisper 폴백 "
                 f"({exc})",
                 file=sys.stderr,
             )
-    return _transcribe_faster_whisper(
+            fallback_label = "faster-whisper(mlx-fallback)"
+    result = _transcribe_faster_whisper(
         wav,
         model,
         lang,
         hotwords,
         condition_on_previous_text=condition_on_previous_text,
     )
+    _ASR_TRACE.label = fallback_label
+    return result
 
 
 def _transcribe_selected(
@@ -276,6 +297,9 @@ def _ingest_locked(
     rejected_hotwords: str | None = None
     speech_seconds: float | None = None
     repair: str | None = None
+    # 최종 채택 전사를 만든 백엔드 — 자막·무오디오 경로와 fake 패치 경로는
+    # None으로 남는다(whisper가 실행되지 않았다는 뜻).
+    asr_backend_used: str | None = None
     cues = None if force_whisper else find_subtitle_cues(ws.video)
     if cues:
         from .subtitles import dedup_rolling_cues
@@ -314,6 +338,9 @@ def _ingest_locked(
         # 추출은 워크스페이스 캐시로 — 같은 wav를 이후 diarize/
         # audioevents가 재사용한다(명령마다 재추출하던 것을 봉합).
         wav = cached_audio_wav(ws)
+        # 같은 스레드의 이전 실행이 남긴 라벨이 fake 패치 경로에 새지
+        # 않도록 호출 전 슬롯을 비운다.
+        _ASR_TRACE.label = None
         segments, words, language = _transcribe_selected(
             wav,
             model,
@@ -321,6 +348,7 @@ def _ingest_locked(
             hotwords,
             backend=asr_backend,
         )
+        asr_backend_used = _ASR_TRACE.label
         applied_hotwords = hotwords
         if hotwords and _hotword_contaminated(segments, hotwords):
             # 무발화·BGM 영상에서 hotwords가 반복 환각을 만든다(2회 실측:
@@ -328,6 +356,7 @@ def _ingest_locked(
             # 잡고 반복성으로 잡는다 — hotwords 없이 재전사해 채택.
             print("hotwords 오염 의심(글로서리 용어 반복 환각) — "
                   "hotwords 없이 재전사", file=sys.stderr)
+            _ASR_TRACE.label = None
             segments, words, language = _transcribe_selected(
                 wav,
                 model,
@@ -335,6 +364,7 @@ def _ingest_locked(
                 None,
                 backend=asr_backend,
             )
+            asr_backend_used = _ASR_TRACE.label
             applied_hotwords, rejected_hotwords = None, hotwords
             print(f"재전사 채택: {len(segments)} segments (hotwords 제외)",
                   file=sys.stderr)
@@ -350,6 +380,7 @@ def _ingest_locked(
                 f"이어받기를 끄고 다시 받아씁니다",
                 file=sys.stderr,
             )
+            _ASR_TRACE.label = None
             alt, alt_words, alt_language = _transcribe_selected(
                 wav,
                 model,
@@ -358,9 +389,13 @@ def _ingest_locked(
                 backend=asr_backend,
                 condition_on_previous_text=False,
             )
+            # 재시도가 다른 백엔드로 흘렀을 수 있다(예: MLX 폴백) — 라벨은
+            # 채택된 쪽에만 결박한다.
+            alt_backend_used = _ASR_TRACE.label
             alt = resegment_by_words(alt, alt_words)
             if _spoken_seconds(alt) > _spoken_seconds(segments):
                 segments, words, language = alt, alt_words, alt_language
+                asr_backend_used = alt_backend_used
                 repair = "condition_on_previous_text=False"
                 print(
                     f"다시 받아쓴 쪽을 씁니다: {len(segments)}개 문장 · "
@@ -403,6 +438,9 @@ def _ingest_locked(
     manifest.update({"whisper_model": model, "language": language,
                      "segments": len(segments), "words": len(words),
                      "transcript_source": source,
+                     # 실제 사용된 ASR 백엔드(MLX 폴백 여부 포함) — 지각
+                     # 산출물 감사의 마지막 공백. whisper 미실행이면 None.
+                     "asr_backend": asr_backend_used,
                      "hotwords": applied_hotwords,
                      "hotwords_rejected": rejected_hotwords,
                      # 붕괴는 조용하다 — 정상 실행도 커버리지를 남겨야

@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+message: "If you use TIMECODE-AGENT in research or tooling, please cite it as below."
+title: "TIMECODE-AGENT: transcript-first video understanding for coding agents"
+type: software
+authors:
+  - name: "mupozg823"
+version: "0.1.0"
+date-released: "2026-07-26"
+license: MIT
+repository-code: "https://github.com/mupozg823/timecode-agent"

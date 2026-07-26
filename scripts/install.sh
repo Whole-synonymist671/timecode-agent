@@ -200,7 +200,12 @@ else
     good "va · tca 전체 런타임 설치 (standalone build from: $root)"
     [ "$dry_run" -eq 0 ] && have va && say "  $(va --version 2>/dev/null || echo 'va 준비됨')"
   else
-    miss "CLI 설치 실패 — scripts/install.sh --skip-skills 를 다시 실행해 로그를 확인하세요"
+    # --skip-skills는 로그와 무관하다(스킬 복사 생략 옵션) — 실패 원인은
+    # 실제 실패한 설치 명령을 직접 재실행해야 전체 출력으로 보인다.
+    # 경로는 printf %q로 이스케이프 — 공백·따옴표·$ 든 checkout 경로도
+    # 복붙 가능한 한 줄이 되게 한다.
+    retry_target="$(printf '%q' "$root[diarize]")"
+    miss "CLI 설치 실패 — 원인 확인: uv tool install --python 3.12 --force --reinstall-package video-agent $retry_target 를 직접 실행해 전체 오류를 보세요"
     fatal=$((fatal + 1))
   fi
 fi
