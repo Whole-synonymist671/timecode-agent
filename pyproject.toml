@@ -1,6 +1,6 @@
 [project]
 name = "video-agent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Transcript-first, lazily-verified video understanding toolkit for LLM agents"
 readme = "docs/public/README.md"
 license = "MIT"

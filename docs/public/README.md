@@ -86,8 +86,10 @@ before any grounded edit is exported.
   fallback and CI runs a Windows smoke job; see
   [Requirements](#requirements).
 
-All shipped to `main`; the first tagged release is
-[v0.1.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.1.0).
+All shipped to `main`. The current release is
+[v0.2.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.2.0);
+[v0.1.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.1.0) was
+the first.
 
 ---
 
@@ -421,6 +423,7 @@ the argparse or effective runtime defaults, not documentation guesses.
 | Command | Flag | Default | Meaning |
 |---|---|---|---|
 | `checkpoint add` | `--json` / `--json-file` | — | checkpoint object as a JSON string / file path (`-` for stdin) |
+| `checkpoint add` | `--id` / `--span` / `--status` / `--hypothesis` / `--confidence` / `--segments` / `--visual-evidence` / `--note` | — | build the checkpoint from flags instead of JSON; mixing the two input paths is rejected, including an explicitly empty value |
 | `checkpoint list`, `status` | `--json` | off | machine-readable output |
 
 </details>
@@ -514,6 +517,13 @@ transcript scored 0.211 coverage (0.289 below the 0.5 gate) and the healthy
 one 0.809 (0.309 above it) — not a hair's-width threshold call on this input.
 (Implementation: `_transcript_collapsed` in `src/video_agent/ingest.py`.)
 
+The manifest also stamps `asr_backend` — which backend produced the adopted
+transcript (faster-whisper, or an MLX fallback), suffixed `+<backend>(tail)`
+when a tail retranscribe contributed part of it — so a quality comparison can
+name its own source instead of guessing. It is `null` when no ASR ran at all,
+which is exactly the uploader-caption path: read `transcript_source`
+(`subtitles`) to identify that case.
+
 ## Requirements
 
 - Python 3.12 on macOS or Linux ([`uv`](https://docs.astral.sh/uv/getting-started/installation/)
@@ -521,6 +531,10 @@ one 0.809 (0.309 above it) — not a hair's-width threshold call on this input.
 - `ffmpeg` and `ffprobe` on `PATH`
 - `yt-dlp` for URL ingest
 - A coding-agent harness that can discover the included Agent Skill
+- Interface language: mixed. Most `--help` text is English, while diagnostics,
+  the `va brief`/`va status` summaries, and the `va view` UI are Korean, and no
+  locale switch exists. Ledgers and handoffs speak whatever language you write
+  into them; see [Notes](#notes).
 - Windows is experimental: the core CLI, ledgers, and workspace locking run
   (shared locks degrade to exclusive via `msvcrt`), a CI smoke job exercises
   install → import → lock round-trip → CLI startup, and the Apple-backed
@@ -727,6 +741,15 @@ fixtures, not a source of performance claims either.
 
 ## Notes
 
+- Language is mixed, and handoffs inherit yours. Roughly two thirds of the
+  `--help` strings are English, while diagnostics, the `va brief`/`va status`
+  summaries, and the `va view` UI are Korean; no locale switch is implemented.
+  Timestamps and structural fields are language-neutral, but prose is not:
+  `srt` carries transcript text, `md` renders checkpoint hypotheses, and
+  `edl`/`xml`/`fcpxml`/`otio` embed the checkpoint `situation` or `hypothesis`
+  in comments, markers, and metadata. Whatever language you write into the
+  ledger is the language your NLE handoff speaks — the agent writes those
+  fields in the language you asked in.
 - Only ingest content you have the right to download and analyze. The
   `--cookies-from-browser` option exists for your own authorized sessions —
   never ship credentials in a repository.

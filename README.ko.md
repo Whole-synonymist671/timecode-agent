@@ -84,8 +84,10 @@ va status va-out/show
 - **Windows 실험 지원** — 워크스페이스 락에 `msvcrt` 폴백이 들어가고
   CI가 Windows 스모크 잡을 돌린다; [요구 사항](#요구-사항) 참고.
 
-전부 `main`에 반영됐다. 첫 태그 릴리스는
-[v0.1.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.1.0)이다.
+전부 `main`에 반영됐다. 현재 릴리스는
+[v0.2.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.2.0)이고,
+[v0.1.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.1.0)이
+첫 릴리스였다.
 
 ---
 
@@ -415,6 +417,7 @@ argparse 또는 유효 런타임 기본값이며 문서상의 추측이 아니�
 | 명령 | 플래그 | 기본값 | 의미 |
 |---|---|---|---|
 | `checkpoint add` | `--json` / `--json-file` | — | 체크포인트 객체를 JSON 문자열 / 파일 경로로(`-`는 stdin) |
+| `checkpoint add` | `--id` / `--span` / `--status` / `--hypothesis` / `--confidence` / `--segments` / `--visual-evidence` / `--note` | — | JSON 대신 플래그로 체크포인트를 구성한다. 두 입력 경로를 섞으면 거부되며, 명시적으로 빈 값도 마찬가지다 |
 | `checkpoint list`, `status` | `--json` | 꺼짐 | 기계 판독 출력 |
 
 </details>
@@ -504,6 +507,12 @@ argparse 또는 유효 런타임 기본값이며 문서상의 추측이 아니�
 입력에서는 아슬아슬한 문턱 판정이 아니었다.
 (구현: `src/video_agent/ingest.py`의 `_transcript_collapsed`.)
 
+manifest는 `asr_backend`도 남긴다 — 채택된 전사를 만든 백엔드
+(faster-whisper 또는 MLX 폴백)이고, 꼬리 재전사가 일부를 채웠으면
+`+<백엔드>(tail)`이 붙는다. 덕분에 품질을 비교할 때 출처를 추측하지 않고
+지목할 수 있다. ASR이 아예 돌지 않은 경우에는 `null`인데, 그게 바로
+업로더 자막 경로다 — 그 경우는 `transcript_source`(`subtitles`)로 식별한다.
+
 ## 요구 사항
 
 - macOS 또는 Linux의 Python 3.12
@@ -512,6 +521,10 @@ argparse 또는 유효 런타임 기본값이며 문서상의 추측이 아니�
 - `PATH`의 `ffmpeg`와 `ffprobe`
 - URL ingest에는 `yt-dlp`
 - 포함된 Agent Skill을 발견할 수 있는 코딩 에이전트 하네스
+- 인터페이스 언어: 혼재한다. `--help` 문자열은 대부분 영어이고, 진단과
+  `va brief`/`va status` 요약, `va view` UI는 한국어다. 로케일 전환 수단은
+  없다. 원장과 인계물은 당신이 적어 넣은 언어로 말한다 —
+  [참고](#참고) 참조.
 - Windows는 실험 지원: 코어 CLI·원장·워크스페이스 락이 동작하고(공유
   락은 `msvcrt`로 배타 강등), CI 스모크 잡이 설치 → import → 락
   왕복 → CLI 기동을 검사하며, Apple 계열 큐(OCR·얼굴·의미 오디오
@@ -710,6 +723,15 @@ readiness 상태, 그리고 하드웨어 순위가 아니라 회귀를 잡기 �
 
 ## 참고
 
+- 언어는 혼재하고, 인계물은 당신의 언어를 물려받는다. `--help`
+  문자열의 약 3분의 2는 영어이고, 진단과 `va brief`/`va status` 요약,
+  `va view` UI는 한국어다. 로케일 전환은 구현돼 있지 않다.
+  타임스탬프와 구조 필드는 언어 중립이지만 산문은 아니다 — `srt`는 전사
+  텍스트를 담고, `md`는 체크포인트 가설을 렌더하며,
+  `edl`·`xml`·`fcpxml`·`otio`는 체크포인트의 `situation` 또는
+  `hypothesis`를 주석·마커·메타데이터에 심는다. 원장에 적어 넣은 언어가
+  곧 NLE 인계물이 말하는 언어다 — 에이전트는 그 필드를 당신이 질문한
+  언어로 쓴다.
 - 내려받고 분석할 권리가 있는 콘텐츠만 ingest하라.
   `--cookies-from-browser` 옵션은 자신의 인가된 세션을 위한 것이다 —
   자격 증명을 저장소에 절대 담지 말라.
