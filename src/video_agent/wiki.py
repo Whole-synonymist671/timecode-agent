@@ -53,6 +53,7 @@ from .fsio import write_text_atomic
 from .projection_cache import (
     directory_fingerprint,
     load_projection_cache,
+    renderer_salt,
     save_projection_cache,
     workspace_fingerprint,
 )
@@ -498,7 +499,8 @@ def build_wiki(
 
     # 위키는 엔티티가 여러 워크스페이스를 가로지르는 전역 집계라 부분
     # 재투영이 안 된다 — 대신 코퍼스 전체가 무변경이면 통째로 건너뛴다
-    # (재개 세션의 흔한 경우). 포맷 변경 시 wiki-v1 솔트를 올릴 것.
+    # (재개 세션의 흔한 경우). 솔트는 렌더러 소스 digest에서 자동 유도.
+    wiki_salt = renderer_salt("wiki")
     fingerprint_entries = []
     for d in ws_dirs:
         try:
@@ -506,7 +508,7 @@ def build_wiki(
         except ValueError:
             rel = d.name
         fingerprint_entries.append(
-            f"{rel}={workspace_fingerprint(d, salt='wiki-v1')}"
+            f"{rel}={workspace_fingerprint(d, salt=wiki_salt)}"
         )
     corpus_fingerprint = hashlib.sha256(
         ("|".join(sorted(fingerprint_entries))
@@ -522,7 +524,7 @@ def build_wiki(
         isinstance(cached_wiki, dict)
         and cached_wiki.get("fp") == corpus_fingerprint
         and cached_wiki.get("out_fp")
-        == directory_fingerprint(wiki, salt="wiki-v1")
+        == directory_fingerprint(wiki, salt=wiki_salt)
         and isinstance(cached_wiki.get("counts"), dict)
         and wiki_index.is_file()
     ):
@@ -549,7 +551,7 @@ def build_wiki(
                         alias_groups, durable, candidates, ent_link)
     cache["wiki"] = {
         "fp": corpus_fingerprint,
-        "out_fp": directory_fingerprint(wiki, salt="wiki-v1"),
+        "out_fp": directory_fingerprint(wiki, salt=wiki_salt),
         "counts": counts,
     }
     save_projection_cache(

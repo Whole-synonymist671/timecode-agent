@@ -40,6 +40,7 @@ from .image_provenance import load_image_records
 from .projection_cache import (
     files_fingerprint,
     load_projection_cache,
+    renderer_salt,
     save_projection_cache,
     workspace_fingerprint,
 )
@@ -239,8 +240,8 @@ def build_index(
         if projection_root is not None
         else corpus_root(roots)
     )
-    # 포맷 솔트 — scene-log/image-index/edits 렌더 포맷 변경 시 올릴 것.
-    index_salt = "index-v1"
+    # 포맷 솔트 — 산출물을 결정하는 렌더러들의 소스 digest에서 자동 유도.
+    index_salt = renderer_salt("index")
     cache = load_projection_cache(root)
     index_cache = cache.get("index")
     if not isinstance(index_cache, dict):

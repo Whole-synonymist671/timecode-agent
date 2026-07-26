@@ -61,6 +61,11 @@ before any grounded edit is exported.
 
 ## Recently shipped
 
+- **Incremental corpus projections and rational timecode** — unchanged
+  workspaces are fingerprint-skipped on rebuilds (salts derive from renderer
+  source digests), a shared per-workspace audio cache feeds
+  transcription/diarization/audio events, and EDL/FCPXML/OTIO exports count
+  frames at the exact rational rate (29.97 no longer drifts ~3.6 s/hour).
 - **Captions-first ingest** — when the source ships a caption track, ingest
   reuses it instead of re-transcribing the audio.
 - **Silent-stall transcription guard** — a coverage check against VAD-detected
@@ -81,8 +86,8 @@ before any grounded edit is exported.
   fallback and CI runs a Windows smoke job; see
   [Requirements](#requirements).
 
-All shipped to `main`; there is no version tag yet, so this README refers to
-them by what they do rather than a release number.
+All shipped to `main`; the first tagged release is
+[v0.1.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.1.0).
 
 ---
 

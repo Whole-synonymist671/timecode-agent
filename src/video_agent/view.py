@@ -45,6 +45,7 @@ from .fsio import write_text_atomic
 from .image_provenance import resolve_image_path
 from .projection_cache import (
     load_projection_cache,
+    renderer_salt,
     save_projection_cache,
     workspace_fingerprint,
 )
@@ -765,9 +766,10 @@ def build_view(
         else corpus_root(roots)
     )
     # 포맷 솔트 — export_html/_page 렌더 포맷을 바꾸면 올려서 전량 무효화.
-    # 렌더러가 바뀔 때마다 범프 — 안 올리면 투영 캐시가 기존 코퍼스의
-    # 플레이어 페이지를 낡은 렌더로 영구 스킵한다(2026-07-26 실측).
-    view_salt = "view-v2"
+    # 렌더러 소스 digest에서 자동 유도 — 수동 범프를 잊으면 투영 캐시가
+    # 기존 코퍼스의 플레이어 페이지를 낡은 렌더로 영구 스킵한다
+    # (2026-07-26 실측, v1→v2 수동 시절의 사고를 기계로 봉합).
+    view_salt = renderer_salt("view")
     cache = load_projection_cache(root)
     view_cache = cache.get("view")
     if not isinstance(view_cache, dict):
@@ -911,3 +913,5 @@ def build_view(
     write_text_atomic(dest, _page("코퍼스 브라우저", body, _CORPUS_JS))
     save_projection_cache(root, cache, live_keys={rel for _, rel in rows})
     return dest, len(rows)
+
+

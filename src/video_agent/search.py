@@ -267,7 +267,12 @@ def search_docs(docs: list[dict], query: str, top: int = 10) -> list[dict]:
 # 단일어 질의는 읽을 때 윈도우 문서만 걸러낸다. 캐시 실패는 전부 직접
 # 수집으로 조용히 폴백한다. 문서 형태를 바꾸면 솔트를 올릴 것.
 _SEARCH_CACHE_FILENAME = ".tca-search-cache.db"
-_SEARCH_SALT = "search-v1"
+def _search_salt() -> str:
+    # 문서 추출 로직(이 모듈)이 바뀌면 sqlite 문서 캐시도 무효 — 수동
+    # 버전 대신 소스 digest에서 유도한다(투영 캐시와 같은 계약).
+    from .projection_cache import renderer_salt
+
+    return renderer_salt("search")
 
 
 def _cache_key(ws_dir: Path, corpus: Path) -> str:
@@ -284,7 +289,7 @@ def _cached_ws_docs(
     from .projection_cache import workspace_fingerprint
 
     key = _cache_key(ws_dir, corpus)
-    fingerprint = workspace_fingerprint(ws_dir, salt=_SEARCH_SALT)
+    fingerprint = workspace_fingerprint(ws_dir, salt=_search_salt())
     row = con.execute(
         "SELECT fp, docs FROM ws_docs WHERE ws = ?", (key,)
     ).fetchone()
