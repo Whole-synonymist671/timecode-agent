@@ -545,7 +545,7 @@ own cost.
 | URL ingest | `yt-dlp` required | `yt-dlp` required |
 | OCR and face cues | Apple Vision backend installed by default | unavailable; workflow degrades to other evidence |
 | Semantic audio events | Apple Sound Analysis backend installed by default | unavailable; energy highlights remain available |
-| Diarization | pyannote and ungated sherpa fallback installed by default | same |
+| Diarization | ungated sherpa installed by default; gated pyannote via the `diarize` extra (the installer includes it) | same |
 | OTIO editorial handoff | OpenTimelineIO installed by default | same |
 | Hardware clip preview | VideoToolbox + AudioToolbox AAC in `low-power` or by explicit selection | software encoding |
 
@@ -566,11 +566,14 @@ scripts/install.sh --dry-run
 scripts/install.sh
 ```
 
-Pyannote's Python runtime is installed immediately, but its remote model is
-account-gated by Hugging Face. When no accepted account token is present, the
-installer leaves pyannote marked as gated and prepares sherpa so diarization is
-still usable immediately. `--skip-models` is the explicit opt-out from initial
-model preparation.
+The installer includes the `diarize` extra, so pyannote's Python runtime is
+present after `scripts/install.sh`; its remote model stays account-gated by
+Hugging Face, and without an accepted token the prepared ungated sherpa
+backend handles diarization immediately. A bare
+`uv tool install --python 3.12 .` skips pyannote's ~700 MB torch stack
+entirely (sherpa still works); opt back in any time with
+`uv tool install --python 3.12 '.[diarize]'`. `--skip-models` is the
+explicit opt-out from initial model preparation.
 
 Every feature starts enabled. Runtime policy can be inspected and changed
 without reinstalling:

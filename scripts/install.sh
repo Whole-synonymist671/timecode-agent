@@ -184,7 +184,7 @@ if [ "$skip_cli" -eq 1 ]; then
   say "건너뜀 (--skip-cli)"
 elif [ "$dry_run" -eq 1 ]; then
   run uv tool install --python 3.12 --force \
-    --reinstall-package video-agent "$root"
+    --reinstall-package video-agent "$root[diarize]"
   cli_ready=1
   good "va · tca 전체 런타임 standalone 설치 계획"
 elif ! have uv; then
@@ -193,8 +193,9 @@ elif ! have uv; then
 else
   # 기본 설치는 checkout 수명과 분리한다. 같은 버전의 로컬 소스 변경도
   # uv 빌드 캐시에 가리지 않도록 프로젝트 패키지는 항상 새로 빌드한다.
+  # 기본 경로는 diarize extra(pyannote)까지 — all-on 경험은 설치기가 지킨다.
   if run uv tool install --python 3.12 --force \
-    --reinstall-package video-agent "$root"; then
+    --reinstall-package video-agent "$root[diarize]"; then
     cli_ready=1
     good "va · tca 전체 런타임 설치 (standalone build from: $root)"
     [ "$dry_run" -eq 0 ] && have va && say "  $(va --version 2>/dev/null || echo 'va 준비됨')"

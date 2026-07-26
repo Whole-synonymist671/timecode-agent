@@ -11,16 +11,15 @@ from __future__ import annotations
 import json
 import os
 import sys
-import tempfile
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from .audio_cache import cached_audio_wav
 from .cache_paths import cache_root
 from .fsio import write_text_atomic
 from .ingest import Segment
-from .proc import run
 from .transcript_segments import load_transcript_segments_for_update
 from .workspace import Workspace
 
@@ -136,11 +135,15 @@ def _turns_from_pyannote_output(
 
 def _pyannote_turns(wav: Path, num_speakers: int | None) -> list[dict]:
     try:
-        from pyannote.audio import Pipeline
+        from pyannote.audio import (  # pyright: ignore[reportMissingImports]
+            Pipeline,
+        )
     except ImportError:
         raise RuntimeError(
-            "pyannote 백엔드 누락 — 기본 설치가 불완전합니다; "
-            "같은 배포 소스에서 scripts/install.sh를 다시 실행하세요"
+            "pyannote 백엔드 미설치 — diarize extra로 설치합니다: "
+            "`uv tool install --python 3.12 '.[diarize]'` 또는 "
+            "scripts/install.sh(기본 포함). 설치 없이도 `--backend sherpa`"
+            "(게이트 없음)가 즉시 동작합니다"
         ) from None
     try:
         pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
@@ -254,34 +257,28 @@ def compute_diarization(
         )
         for index, segment in enumerate(transcript)
     ]
-    with tempfile.TemporaryDirectory() as tmp:
-        wav = Path(tmp) / "audio.wav"
-        res = run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-i", str(ws.video),
-             "-vn", "-ac", "1", "-ar", "16000", str(wav)],
-            capture_output=True, text=True,
-        )
-        if res.returncode != 0:
-            raise RuntimeError(f"ffmpeg failed: {res.stderr.strip()}")
-        if backend == "pyannote":
-            turns = _pyannote_turns(wav, num_speakers)
-            used = "pyannote"
-        elif backend == "sherpa":
+    # 워크스페이스 오디오 캐시 재사용 — ingest가 이미 뽑아 둔 wav가 있으면
+    # 추출 없이 바로 쓴다(없으면 여기서 추출해 이후 audioevents가 재사용).
+    wav = cached_audio_wav(ws)
+    if backend == "pyannote":
+        turns = _pyannote_turns(wav, num_speakers)
+        used = "pyannote"
+    elif backend == "sherpa":
+        turns = _sherpa_turns(wav, num_speakers)
+        used = "sherpa"
+    else:
+        selected = _auto_backend(os.environ)
+        if selected == "sherpa":
             turns = _sherpa_turns(wav, num_speakers)
             used = "sherpa"
         else:
-            selected = _auto_backend(os.environ)
-            if selected == "sherpa":
+            try:
+                turns = _pyannote_turns(wav, num_speakers)
+                used = "pyannote"
+            except RuntimeError as e:
+                print(f"pyannote 불가 → sherpa 폴백\n({e})", file=sys.stderr)
                 turns = _sherpa_turns(wav, num_speakers)
                 used = "sherpa"
-            else:
-                try:
-                    turns = _pyannote_turns(wav, num_speakers)
-                    used = "pyannote"
-                except RuntimeError as e:
-                    print(f"pyannote 불가 → sherpa 폴백\n({e})", file=sys.stderr)
-                    turns = _sherpa_turns(wav, num_speakers)
-                    used = "sherpa"
     write_text_atomic(ws.root / "diarization.json",
                       json.dumps(turns, ensure_ascii=False, indent=1))
     ws.stamp_tool("diarize", used)

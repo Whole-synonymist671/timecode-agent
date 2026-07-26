@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import tempfile
 import unicodedata
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .image_provenance import (
@@ -102,29 +104,60 @@ def capture_frames(
         if any(c in crop for c in ";'\"[]"):
             raise ValueError(f"invalid crop expression: {crop!r}")
         suffix = "_c" + hashlib.md5(crop.encode()).hexdigest()[:8]
-    out: list[Path] = []
-    try:
-        for t, item_reason in zip(ts, reasons):
-            slug = _reason_slug(item_reason)
-            name = frame_name(t)
-            if suffix:
-                name = name.replace(".jpg", f"{suffix}.jpg")
-            base = name[:-4]
+    # 결과 순서는 요청 순서가 정본 — 병렬은 ffmpeg 스폰에만 쓴다.
+    # 캐시 키는 (t, crop)=base이지 reason 소인이 아니다: 같은 배치에서
+    # 같은 시각을 다른 reason으로 요청해도 첫 해석의 dest 하나만 뽑는다
+    # (순차 시절엔 앞선 캡처가 파일로 남아 뒤 호출이 캐시 적중하던 계약).
+    plan: list[Path] = []
+    misses: dict[Path, float] = {}
+    dest_by_base: dict[str, Path] = {}
+    for t, item_reason in zip(ts, reasons):
+        slug = _reason_slug(item_reason)
+        name = frame_name(t)
+        if suffix:
+            name = name.replace(".jpg", f"{suffix}.jpg")
+        base = name[:-4]
+        dest = dest_by_base.get(base)
+        if dest is None:
             dest, cache_hit = _resolve_frame_dest(ws.frames_dir, base, slug)
+            dest_by_base[base] = dest
             if not cache_hit:
-                _capture_one(ws.frames_dir, video, t, crop, dest)
-            out.append(dest)
-    except Exception:
+                misses[dest] = t
+        plan.append(dest)
+    failures: dict[Path, BaseException] = {}
+    if misses:
+        # 상한 4: ffmpeg 디코더 동시성은 방송 소프트웨어와 CPU를 나눠 쓰는
+        # 환경 제약이 걸려 있다 — full fan-out 금지.
+        workers = min(4, len(misses), os.cpu_count() or 1)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                dest: pool.submit(
+                    _capture_one, ws.frames_dir, video, t, crop, dest
+                )
+                for dest, t in misses.items()
+            }
+            for dest, future in futures.items():
+                error = future.exception()
+                if error is not None:
+                    failures[dest] = error
+    if failures:
+        succeeded = [
+            (dest, rounded, item_reason)
+            for dest, rounded, item_reason in zip(plan, rounded_ts, reasons)
+            if dest not in failures
+        ]
         _record_capture_batch(
-            ws, out, rounded_ts[:len(out)], requested_timestamps=rounded_ts,
-            crop=crop, reasons=reasons[:len(out)],
+            ws, [dest for dest, _, _ in succeeded],
+            [rounded for _, rounded, _ in succeeded],
+            requested_timestamps=rounded_ts, crop=crop,
+            reasons=[item_reason for _, _, item_reason in succeeded],
         )
-        raise
+        raise next(failures[dest] for dest in plan if dest in failures)
     _record_capture_batch(
-        ws, out, rounded_ts, requested_timestamps=rounded_ts,
+        ws, plan, rounded_ts, requested_timestamps=rounded_ts,
         crop=crop, reasons=reasons,
     )
-    return out
+    return plan
 
 
 def _capture_one(
@@ -234,13 +267,30 @@ def capture_sharpest(
     unique_frames = capture_frames(ws, unique_times)
     frame_at = dict(zip(unique_times, unique_frames))
 
+    # 선명도 프로브도 프레임당 ffmpeg 1회 — 유일 프레임만 병렬로 미리
+    # 채점한다(같은 프레임이 여러 후보군에 겹칠 수 있다). 실패는 결정성을
+    # 위해 유일 시각 순서의 첫 오류를 던진다.
+    probe_targets = list(dict.fromkeys(frame_at[t] for t in unique_times))
+    workers = min(4, len(probe_targets), os.cpu_count() or 1)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        probe_futures = {
+            frame: pool.submit(sharpness, frame) for frame in probe_targets
+        }
+    for frame in probe_targets:
+        probe_error = probe_futures[frame].exception()
+        if probe_error is not None:
+            raise probe_error
+    sharpness_of = {
+        frame: future.result() for frame, future in probe_futures.items()
+    }
+
     out: list[Path] = []
     records: list[ImageEventInput] = []
     legacy_winners: list[ImageEventInput] = []
     for t, item_reason, cands in candidate_groups:
         frames = [frame_at[candidate_t] for candidate_t in cands]
         scored = [
-            (sharpness(p), -abs(ct - t), -ct, p, ct)
+            (sharpness_of[p], -abs(ct - t), -ct, p, ct)
             for p, ct in zip(frames, cands)
         ]
         best = max(scored)

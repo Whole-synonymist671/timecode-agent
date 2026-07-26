@@ -7,6 +7,7 @@ adapter remains one public CLI surface; splitting it is a separate refactor.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Final
@@ -161,8 +162,18 @@ def cmd_filmstrip(args) -> int:
             parse_ts(args.end) if args.end else duration,
             args.n,
         )]
-    for start, end, n in windows:
-        path, mids = make_filmstrip(ws, start, end, n=n, cols=args.cols)
+    # 창마다 독립 ffmpeg 1회 — bounded pool로 스폰만 겹치고 출력은
+    # 계획 순서 그대로 (전수점검 실측: 2~3 워커에서 벽시계 20~38%↓,
+    # full fan-out은 방송 공존 제약으로 금지).
+    from concurrent.futures import ThreadPoolExecutor
+
+    workers = min(3, len(windows), os.cpu_count() or 1)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        results = list(pool.map(
+            lambda w: make_filmstrip(ws, w[0], w[1], n=w[2], cols=args.cols),
+            windows,
+        ))
+    for path, mids in results:
         print(path)
         for i, t in enumerate(mids, 1):
             print(f"cell {i}: {t:.1f}s")

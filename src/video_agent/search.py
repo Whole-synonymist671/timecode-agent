@@ -261,27 +261,122 @@ def search_docs(docs: list[dict], query: str, top: int = 10) -> list[dict]:
     return _rrf_fuse(ranked, top)
 
 
+# 검색 문서 캐시 — 매 질의가 코퍼스 전 워크스페이스의 transcript/checkpoint/
+# OCR JSON을 다시 파싱하던 것을(전수점검 2026-07-26 확정), 워크스페이스당
+# 지문+선구축 문서 1행으로 영속화한다. 윈도우 포함(superset)으로 캐시하고
+# 단일어 질의는 읽을 때 윈도우 문서만 걸러낸다. 캐시 실패는 전부 직접
+# 수집으로 조용히 폴백한다. 문서 형태를 바꾸면 솔트를 올릴 것.
+_SEARCH_CACHE_FILENAME = ".tca-search-cache.db"
+_SEARCH_SALT = "search-v1"
+
+
+def _cache_key(ws_dir: Path, corpus: Path) -> str:
+    """그룹이 달라도 leaf 이름이 같을 수 있다 — 코퍼스 상대경로가 키다."""
+    try:
+        return ws_dir.relative_to(corpus).as_posix()
+    except ValueError:
+        return ws_dir.name
+
+
+def _cached_ws_docs(
+    con: sqlite3.Connection, ws_dir: Path, corpus: Path
+) -> list[dict]:
+    from .projection_cache import workspace_fingerprint
+
+    key = _cache_key(ws_dir, corpus)
+    fingerprint = workspace_fingerprint(ws_dir, salt=_SEARCH_SALT)
+    row = con.execute(
+        "SELECT fp, docs FROM ws_docs WHERE ws = ?", (key,)
+    ).fetchone()
+    if row and row[0] == fingerprint:
+        try:
+            return json.loads(row[1])
+        except (json.JSONDecodeError, TypeError):
+            pass  # 손상 캐시 행 = 미스 — 아래에서 재수집해 덮어쓴다
+    docs = collect_docs(Workspace.load(ws_dir), windows=True)
+    con.execute(
+        "INSERT OR REPLACE INTO ws_docs(ws, fp, docs) VALUES (?, ?, ?)",
+        (key, fingerprint, json.dumps(docs, ensure_ascii=False)),
+    )
+    return docs
+
+
+def _collect_all_docs(
+    paths: list[Path], corpus: Path | None, *, windows: bool
+) -> list[dict]:
+    if corpus is None:
+        con = None
+    else:
+        try:
+            con = sqlite3.connect(corpus / _SEARCH_CACHE_FILENAME)
+            con.execute(
+                "CREATE TABLE IF NOT EXISTS ws_docs("
+                "ws TEXT PRIMARY KEY, fp TEXT, docs TEXT)"
+            )
+        except sqlite3.Error:
+            con = None
+    docs: list[dict] = []
+    try:
+        for ws_dir in paths:
+            try:
+                if con is not None and corpus is not None:
+                    ws_docs = _cached_ws_docs(con, ws_dir, corpus)
+                else:
+                    ws_docs = collect_docs(
+                        Workspace.load(ws_dir), windows=True
+                    )
+            except FileNotFoundError:
+                continue
+            except sqlite3.Error:
+                try:
+                    ws_docs = collect_docs(
+                        Workspace.load(ws_dir), windows=True
+                    )
+                except FileNotFoundError:
+                    continue
+            docs.extend(ws_docs)
+        if con is not None and corpus is not None:
+            live = {_cache_key(ws_dir, corpus) for ws_dir in paths}
+            for (dead,) in con.execute("SELECT ws FROM ws_docs").fetchall():
+                if dead not in live:
+                    con.execute("DELETE FROM ws_docs WHERE ws = ?", (dead,))
+            con.commit()
+    finally:
+        if con is not None:
+            con.close()
+    if windows:
+        return docs
+    return [d for d in docs if d["source"] != "transcript-window"]
+
+
 def search_workspaces(
     query: str,
     roots: list[str] | None = None,
     top: int = 10,
     *,
     workspace_paths: Sequence[Path] | None = None,
+    projection_root: Path | None = None,
 ) -> list[dict]:
-    docs: list[dict] = []
     # 단일어 질의는 윈도우에서 얻을 회상이 없다(멤버 경계를 넘는 매칭이
-    # 불가능하다) — 만들지도 색인하지도 않는다.
+    # 불가능하다) — 캐시의 superset에서 걸러낸다.
     windows = len(_nfc(query).split()) >= 2
-    paths = (
-        list(workspace_paths)
-        if workspace_paths is not None
-        else find_workspaces(roots)
-    )
-    for root in paths:
+    if workspace_paths is not None:
+        # 리스 러너의 완전 스냅샷은 projection_root를 함께 준다 — 그때만
+        # 캐시를 쓴다. 루트 없는 임의 부분집합(라이브러리 호출)은 캐시를
+        # 우회한다: 부분집합 기준으로 가지치기하면 나머지 캐시가 지워진다.
+        paths = list(workspace_paths)
+        corpus: Path | None = (
+            Path(projection_root).resolve()
+            if projection_root is not None
+            else None
+        )
+    else:
+        paths = find_workspaces(roots)
         try:
-            docs.extend(collect_docs(Workspace.load(root), windows=windows))
-        except FileNotFoundError:
-            continue
+            corpus = corpus_root(roots) if paths else None
+        except ValueError:
+            corpus = None
+    docs = _collect_all_docs(paths, corpus, windows=windows)
     if not docs:
         raise ValueError(
             "no searchable workspaces found (looked in: "

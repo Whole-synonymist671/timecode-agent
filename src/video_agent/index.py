@@ -37,6 +37,12 @@ from .corpus_projection import (
 from .fsio import write_text_atomic
 from .image_index import export_image_index
 from .image_provenance import load_image_records
+from .projection_cache import (
+    files_fingerprint,
+    load_projection_cache,
+    save_projection_cache,
+    workspace_fingerprint,
+)
 from .scene_log import export_md
 from .search import corpus_root
 from .sequence import export_edits_md, load_sequences
@@ -233,6 +239,14 @@ def build_index(
         if projection_root is not None
         else corpus_root(roots)
     )
+    # 포맷 솔트 — scene-log/image-index/edits 렌더 포맷 변경 시 올릴 것.
+    index_salt = "index-v1"
+    cache = load_projection_cache(root)
+    index_cache = cache.get("index")
+    if not isinstance(index_cache, dict):
+        index_cache = {}
+    cache["index"] = index_cache
+
     rows: list[_IndexedWorkspaceMeta] = []
     for d in ws_dirs:
         ws = Workspace.load(d)
@@ -299,6 +313,50 @@ def build_index(
             if conflicts_to_preserve:
                 # Preflight before any projection write or source move.
                 conflict_dir = _ensure_scene_log_conflict_dir(ws)
+        # 복원·복사로 돌아온 고아 투영물(tca-image-index/tca-edit-log,
+        # 개명 전 stem 잔재)은 입력·산출물 지문 어느 쪽도 바꾸지 않는다 —
+        # 스킵 전에 재빌드 경로와 같은 기준으로 스캔해야 영구 잔존이 없다.
+        orphan_projections = False
+        for candidate in sorted(ws.root.glob("*.md")):
+            if candidate in current_outputs:
+                continue
+            head = candidate.read_text(encoding="utf-8")[:200]
+            if (
+                "\ntype: tca-image-index\n" in head
+                or "\ntype: tca-edit-log\n" in head
+            ):
+                orphan_projections = True
+                break
+        if not orphan_projections and stem != d.name:
+            for suffix in ("", "-images", "-edits"):
+                stale = ws.root / f"{d.name}{suffix}.md"
+                if stale in current_outputs or not stale.is_file():
+                    continue
+                if "\ntype: tca-" in stale.read_text(encoding="utf-8")[:200]:
+                    orphan_projections = True
+                    break
+        # 입력 지문 + 산출물 상태 지문이 모두 일치하고 이관/정리 대상이
+        # 없으면 이 워크스페이스의 쓰기 전체를 건너뛴다(투영은 결정적).
+        # 산출물 지문이 필요한 이유: scene-log의 수기 서사는 다음 재투영의
+        # 입력을 겸한다 — 바깥 편집이 있으면 반드시 다시 렌더해야 한다.
+        fingerprint = workspace_fingerprint(d, salt=index_salt)
+        output_paths = [scene_log_path, image_index_path, edits_path]
+        cached_entry = index_cache.get(rel)
+        if (
+            isinstance(cached_entry, dict)
+            and cached_entry.get("in") == fingerprint
+            and cached_entry.get("out")
+            == files_fingerprint(output_paths, salt=index_salt)
+            and (not row["has_log"] or scene_log_path.is_file())
+            and (image_index_path.is_file() if image_records else True)
+            and (edits_path.is_file() if sequences
+                 else not edits_path.is_file())
+            and not stale_scene_logs
+            and not orphan_projections
+            and not legacy_images.is_file()
+        ):
+            rows.append(row)
+            continue
         if image_records or image_index_path.is_file() or legacy_images.is_file():
             write_text_atomic(
                 image_index_path,
@@ -355,6 +413,10 @@ def build_index(
                 head = stale.read_text(encoding="utf-8")[:200]
                 if "\ntype: tca-" in head:
                     stale.unlink(missing_ok=True)
+        index_cache[rel] = {
+            "in": fingerprint,
+            "out": files_fingerprint(output_paths, salt=index_salt),
+        }
         rows.append(row)
 
     has_wiki = (root / "wiki" / "INDEX.md").is_file()
@@ -494,4 +556,5 @@ def build_index(
 
     dest = root / "INDEX.md"
     write_text_atomic(dest, "\n".join(lines) + "\n")
+    save_projection_cache(root, cache, live_keys={r["rel"] for r in rows})
     return dest, len(rows)

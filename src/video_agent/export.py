@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from typing import Final
 
 from .checkpoint_selection import selected_checkpoints as _selected
@@ -116,10 +117,59 @@ def build_receipt(
     return receipt
 
 
-def _timecode(t: float, fps: int) -> str:
-    frames_total = round(t * fps)
-    ff = frames_total % fps
-    ss = frames_total // fps
+# NTSC 계열은 1001 분수 정확값 — 반올림 정수 fps는 장편에서 프레임 드리프트
+_NTSC_RATES = ((23.976, (1001, 24000)), (29.97, (1001, 30000)),
+               (59.94, (1001, 60000)))
+
+
+def _frame_duration(fps: float) -> tuple[int, int]:
+    """FCPXML frameDuration 유리수 (분자, 분모) — 초당 프레임의 역수."""
+    for rate, frac in _NTSC_RATES:
+        if abs(fps - rate) < 0.005:
+            return frac
+    return (1, max(1, round(fps)))
+
+
+def _frame_rate(m: dict) -> tuple[int, int]:
+    """프레임레이트 정확 유리수 (분자, 분모) — manifest timing 원문 우선.
+
+    timing이 없는 구 워크스페이스는 float fps에서 NTSC 정확값을 복원한다
+    (probe가 fps를 반올림 없이 저장하므로 매칭이 성립). 그 밖의 레이트만
+    정수 반올림으로 물러선다.
+    """
+    raw = str((m.get("timing") or {}).get("avg_frame_rate") or "")
+    num, _, den = raw.partition("/")
+    if num.strip().isdigit() and den.strip().isdigit() \
+            and int(num) and int(den):
+        g = math.gcd(int(num), int(den))
+        return int(num) // g, int(den) // g
+    dur_num, dur_den = _frame_duration(float(m["fps"]))
+    return dur_den, dur_num
+
+
+def _timecode_rate(m: dict) -> tuple[int, int]:
+    """EDL·xmeml용 레이트 — 정수 timebase 표기가 감당하는 유리수만 정확값.
+
+    두 포맷은 명목 정수 timebase로만 표시한다. 명목≈실제(0.1%)인 NTSC
+    1001계는 정확 유리수로 프레임을 세는 것이 규격이지만, 그 밖의 분수
+    레이트(예: 25/2=12.5)는 명목과 수 %씩 어긋나 마커가 통째로 밀린다 —
+    세기와 표시를 같은 명목 정수로 일치시켜 내부 시프트를 없앤다
+    (리뷰 2026-07-26). 정확 유리수 표현은 FCPXML·OTIO가 감당한다.
+    """
+    num, den = _frame_rate(m)
+    if den in (1, 1001):
+        return num, den
+    return max(1, round(num / den)), 1
+
+
+def _timecode(t: float, num: int, den: int) -> str:
+    # 프레임 번호는 정확 유리수로 센다 — 29.97을 30으로 세면 시간당
+    # 108프레임(3.6초) 뒤를 가리킨다. 표시는 명목 정수 timebase의 논드롭
+    # 규약: NTSC에서 타임코드가 벽시계보다 느리게 흐르는 것이 규격이다.
+    timebase = max(1, round(num / den))
+    frames_total = round(t * num / den)
+    ff = frames_total % timebase
+    ss = frames_total // timebase
     hh, ss = divmod(ss, 3600)
     mm, ss = divmod(ss, 60)
     return f"{hh:02d}:{mm:02d}:{ss:02d}:{ff:02d}"
@@ -177,7 +227,7 @@ def export_edl(
     *, selection: list[dict] | None = None,
 ) -> str:
     m = ws.manifest
-    fps = max(1, round(m["fps"]))
+    num, den = _timecode_rate(m)
     clip_name = ws.video.name
     selected = selection if selection is not None else _selected(ws, ids)
     if len(selected) > 999:
@@ -193,8 +243,9 @@ def export_edl(
         dur = e - s
         lines.append(
             f"{i:03d}  AX       V     C        "
-            f"{_timecode(s, fps)} {_timecode(e, fps)} "
-            f"{_timecode(record, fps)} {_timecode(record + dur, fps)}"
+            f"{_timecode(s, num, den)} {_timecode(e, num, den)} "
+            f"{_timecode(record, num, den)} "
+            f"{_timecode(record + dur, num, den)}"
         )
         lines.append(f"* FROM CLIP NAME: {clip_name}")
         lines.append(f"* COMMENT: {_handoff_note(c)}")
@@ -211,8 +262,12 @@ def export_xml(ws: Workspace, ids: list[str] | None = None) -> str:
     from xml.sax.saxutils import escape
 
     m = ws.manifest
-    fps = max(1, round(m["fps"]))
-    total = round(m["duration"] * fps)
+    num, den = _timecode_rate(m)
+    # xmeml 규약: NTSC 레이트는 명목 정수 timebase + ntsc=TRUE 조합으로
+    # 표현한다(timebase 30 + TRUE = 29.97). 프레임 인덱스는 정확 유리수.
+    timebase = max(1, round(num / den))
+    ntsc = "TRUE" if den == 1001 else "FALSE"
+    total = round(m["duration"] * num / den)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         "<!DOCTYPE xmeml>",
@@ -220,7 +275,7 @@ def export_xml(ws: Workspace, ids: list[str] | None = None) -> str:
         " <sequence>",
         f"  <name>{escape(ws.video.stem)} (video-agent markers)</name>",
         f"  <duration>{total}</duration>",
-        f"  <rate><timebase>{fps}</timebase><ntsc>FALSE</ntsc></rate>",
+        f"  <rate><timebase>{timebase}</timebase><ntsc>{ntsc}</ntsc></rate>",
     ]
     for c in _selected(ws, ids):
         s, e = c["span"]
@@ -229,8 +284,8 @@ def export_xml(ws: Workspace, ids: list[str] | None = None) -> str:
             "  <marker>",
             f"   <name>{escape(c['id'])} [{c['status']}]</name>",
             f"   <comment>{comment}</comment>",
-            f"   <in>{round(s * fps)}</in>",
-            f"   <out>{round(e * fps)}</out>",
+            f"   <in>{round(s * num / den)}</in>",
+            f"   <out>{round(e * num / den)}</out>",
             "  </marker>",
         ]
     lines += [" </sequence>", "</xmeml>"]
@@ -279,19 +334,6 @@ def export_srt(ws: Workspace, ids: list[str] | None = None) -> str:
     return "\n".join(lines)
 
 
-# NTSC 계열은 1001 분수 정확값 — 반올림 정수 fps는 장편에서 프레임 드리프트
-_NTSC_RATES = ((23.976, (1001, 24000)), (29.97, (1001, 30000)),
-               (59.94, (1001, 60000)))
-
-
-def _frame_duration(fps: float) -> tuple[int, int]:
-    """FCPXML frameDuration 유리수 (분자, 분모) — 초당 프레임의 역수."""
-    for rate, frac in _NTSC_RATES:
-        if abs(fps - rate) < 0.005:
-            return frac
-    return (1, max(1, round(fps)))
-
-
 def _fcp_time(seconds: float, num: int, den: int) -> str:
     """FCPXML 시간값 — frameDuration 정수배(프레임 정렬)가 규약이다."""
     frames = round(seconds * den / num)
@@ -311,7 +353,8 @@ def export_fcpxml(
     from xml.sax.saxutils import quoteattr
 
     m = ws.manifest
-    num, den = _frame_duration(float(m["fps"]))
+    rate_num, rate_den = _frame_rate(m)
+    num, den = rate_den, rate_num  # frameDuration = 프레임레이트의 역수
 
     def t(seconds: float) -> str:
         return _fcp_time(seconds, num, den)
@@ -383,10 +426,12 @@ def export_otio(
         ) from None
 
     m = ws.manifest
-    fps = max(1, round(m["fps"]))
+    num, den = _frame_rate(m)
+    # OTIO 관례: rate는 실프레임레이트(29.97002997…), value는 프레임 번호.
+    rate = num / den
 
     def rt(seconds: float) -> "otio.opentime.RationalTime":
-        return otio.opentime.RationalTime(round(seconds * fps), fps)
+        return otio.opentime.RationalTime(round(seconds * num / den), rate)
 
     timeline = otio.schema.Timeline(name=f"{ws.video.stem} (video-agent)")
     track = otio.schema.Track(name="V1", kind=otio.schema.TrackKind.Video)

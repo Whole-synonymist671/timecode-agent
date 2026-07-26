@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 from pathlib import Path
 
+from .audio_cache import cached_audio_wav
 from .fsio import write_text_atomic
-from .proc import run
 from .workspace import Workspace
 
 DEFAULT_LABELS = {
@@ -105,17 +104,11 @@ def compute_audio_events(
         print("warning: no audio stream — no audio events", file=sys.stderr)
         events: list[dict] = []
     else:
-        with tempfile.TemporaryDirectory() as tmp:
-            wav = Path(tmp) / "audio.wav"
-            res = run(
-                ["ffmpeg", "-y", "-loglevel", "error", "-i", str(ws.video),
-                 "-vn", "-ac", "1", "-ar", "16000", str(wav)],
-                capture_output=True, text=True,
-            )
-            if res.returncode != 0:
-                raise RuntimeError(
-                    f"ffmpeg audio extract failed: {res.stderr.strip()}")
-            hits = _analyze(wav, labels or DEFAULT_LABELS, min_conf)
+        # 워크스페이스 오디오 캐시 재사용 — ingest/diarize가 뽑아 둔 wav를
+        # 그대로 쓴다(없으면 여기서 추출해 캐시에 남긴다).
+        hits = _analyze(
+            cached_audio_wav(ws), labels or DEFAULT_LABELS, min_conf
+        )
         events = merge_hits(hits)
     write_text_atomic(ws.root / "audio_events.json",
                       json.dumps(events, ensure_ascii=False, indent=1))

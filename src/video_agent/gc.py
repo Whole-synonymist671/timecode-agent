@@ -272,6 +272,10 @@ def categorize(rel_parts: tuple[str, ...], suffix: str) -> str:
     top = rel_parts[0] if rel_parts else ""
     if top == "clips":
         return "clips"
+    if top == "cache":
+        # 파생 미디어 캐시(오디오 wav 등) — 재생성 가능하므로 소스 영상과
+        # 같은 media 분류로 회수한다.
+        return "media"
     if suffix in IMAGE_EXTS:
         return "captures"
     if suffix in VIDEO_EXTS:

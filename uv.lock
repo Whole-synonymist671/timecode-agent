@@ -2058,10 +2058,14 @@ dependencies = [
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'emscripten' or sys_platform == 'win32'" },
     { name = "ocrmac", marker = "sys_platform == 'darwin'" },
     { name = "opentimelineio" },
-    { name = "pyannote-audio" },
     { name = "pyobjc-framework-soundanalysis", marker = "sys_platform == 'darwin'" },
     { name = "sherpa-onnx" },
     { name = "sherpa-onnx-core" },
+]
+
+[package.optional-dependencies]
+diarize = [
+    { name = "pyannote-audio" },
 ]
 
 [package.dev-dependencies]
@@ -2081,11 +2085,12 @@ requires-dist = [
     { name = "numpy" },
     { name = "ocrmac", marker = "sys_platform == 'darwin'", specifier = ">=1.0" },
     { name = "opentimelineio", specifier = ">=0.17" },
-    { name = "pyannote-audio", specifier = ">=3.1,<5" },
+    { name = "pyannote-audio", marker = "extra == 'diarize'", specifier = ">=3.1,<5" },
     { name = "pyobjc-framework-soundanalysis", marker = "sys_platform == 'darwin'", specifier = ">=10.0" },
     { name = "sherpa-onnx", specifier = "==1.13.4" },
     { name = "sherpa-onnx-core", specifier = "==1.13.4" },
 ]
+provides-extras = ["diarize"]
 
 [package.metadata.requires-dev]
 dev = [

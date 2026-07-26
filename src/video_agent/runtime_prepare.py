@@ -33,7 +33,9 @@ def prepare_runtime_assets() -> dict[str, str]:
     )
     if token:
         try:
-            from pyannote.audio import Pipeline
+            from pyannote.audio import (  # pyright: ignore[reportMissingImports]
+                Pipeline,
+            )
 
             pipeline = Pipeline.from_pretrained(
                 "pyannote/speaker-diarization-3.1",

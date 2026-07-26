@@ -535,7 +535,7 @@ ingest는 네트워크를 쓴다. `scripts/install.sh`는 게이트 없는 기�
 | URL ingest | `yt-dlp` 필요 | `yt-dlp` 필요 |
 | OCR·얼굴 큐 | Apple Vision 백엔드 기본 설치 | 불가; 워크플로가 다른 근거로 강등 |
 | 의미 오디오 이벤트 | Apple Sound Analysis 백엔드 기본 설치 | 불가; 에너지 하이라이트는 사용 가능 |
-| 화자 분리 | pyannote + 게이트 없는 sherpa 폴백 기본 설치 | 동일 |
+| 화자 분리 | 게이트 없는 sherpa 기본 설치; 게이트 걸린 pyannote는 `diarize` extra(설치기는 기본 포함) | 동일 |
 | OTIO 편집 인계 | OpenTimelineIO 기본 설치 | 동일 |
 | 하드웨어 클립 미리보기 | `low-power` 또는 명시 선택 시 VideoToolbox + AudioToolbox AAC | 소프트웨어 인코딩 |
 
@@ -555,10 +555,14 @@ scripts/install.sh --dry-run
 scripts/install.sh
 ```
 
-pyannote의 Python 런타임은 즉시 설치되지만 원격 모델은 Hugging Face
-계정 게이트가 걸려 있다. 수락된 계정 토큰이 없으면 설치기는 pyannote를
-게이트 상태로 표시해 두고 sherpa를 준비하므로 화자 분리는 곧바로 쓸 수
-있다. `--skip-models`가 초기 모델 준비의 명시적 옵트아웃이다.
+설치기는 `diarize` extra를 포함하므로 `scripts/install.sh` 뒤에는
+pyannote의 Python 런타임이 존재한다. 원격 모델은 여전히 Hugging Face
+계정 게이트가 걸려 있고, 수락된 토큰이 없으면 준비된 게이트 없는
+sherpa 백엔드가 화자 분리를 곧바로 처리한다. 맨 설치
+`uv tool install --python 3.12 .`는 pyannote의 torch 계열 약 700MB를
+통째로 건너뛴다(sherpa는 그대로 동작). 언제든
+`uv tool install --python 3.12 '.[diarize]'`로 다시 켤 수 있다.
+`--skip-models`가 초기 모델 준비의 명시적 옵트아웃이다.
 
 모든 기능은 켜진 채로 시작한다. 런타임 정책은 재설치 없이 조회·변경할
 수 있다:

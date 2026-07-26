@@ -26,6 +26,7 @@ can't answer.
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 import re
@@ -49,6 +50,12 @@ from .corpus_projection import (
     ws_meta,
 )
 from .fsio import write_text_atomic
+from .projection_cache import (
+    directory_fingerprint,
+    load_projection_cache,
+    save_projection_cache,
+    workspace_fingerprint,
+)
 from .search import corpus_root
 from .status import _workspace_status_snapshot
 from .timestamps import fmt_ts_compact
@@ -489,6 +496,38 @@ def build_wiki(
     ent_dir = wiki / "entities"
     ent_dir.mkdir(parents=True, exist_ok=True)
 
+    # 위키는 엔티티가 여러 워크스페이스를 가로지르는 전역 집계라 부분
+    # 재투영이 안 된다 — 대신 코퍼스 전체가 무변경이면 통째로 건너뛴다
+    # (재개 세션의 흔한 경우). 포맷 변경 시 wiki-v1 솔트를 올릴 것.
+    fingerprint_entries = []
+    for d in ws_dirs:
+        try:
+            rel = d.relative_to(root).as_posix()
+        except ValueError:
+            rel = d.name
+        fingerprint_entries.append(
+            f"{rel}={workspace_fingerprint(d, salt='wiki-v1')}"
+        )
+    corpus_fingerprint = hashlib.sha256(
+        ("|".join(sorted(fingerprint_entries))
+         + f"|hyp={include_hypotheses}").encode()
+    ).hexdigest()[:16]
+    cache = load_projection_cache(root)
+    cached_wiki = cache.get("wiki")
+    wiki_index = wiki / "INDEX.md"
+    # 출력 지문까지 일치해야 스킵한다 — 위키 트리를 밖에서 건드렸다면
+    # (심링크·중복 페이지·수기 노트 편집) 재빌드의 화해·fail-closed
+    # 경로가 반드시 다시 돌아야 한다.
+    if (
+        isinstance(cached_wiki, dict)
+        and cached_wiki.get("fp") == corpus_fingerprint
+        and cached_wiki.get("out_fp")
+        == directory_fingerprint(wiki, salt="wiki-v1")
+        and isinstance(cached_wiki.get("counts"), dict)
+        and wiki_index.is_file()
+    ):
+        return wiki_index, cached_wiki["counts"]
+
     agg = _collect(ws_dirs, root, include_hypotheses)
     labels = set(agg.appearances) | set(agg.quotes_by_speaker)
     page_plan = plan_entity_pages(ent_dir, labels)
@@ -508,4 +547,13 @@ def build_wiki(
     durable, candidates = _split_durable(slugs, agg, page_plan)
     dest = _write_index(wiki, page_plan, slugs, agg, counts,
                         alias_groups, durable, candidates, ent_link)
+    cache["wiki"] = {
+        "fp": corpus_fingerprint,
+        "out_fp": directory_fingerprint(wiki, salt="wiki-v1"),
+        "counts": counts,
+    }
+    save_projection_cache(
+        root, cache,
+        live_keys={entry.split("=", 1)[0] for entry in fingerprint_entries},
+    )
     return dest, counts

@@ -254,6 +254,7 @@ def cmd_search(args) -> int:
         roots=args.roots or None,
         top=args.top,
         workspace_paths=getattr(args, "_workspace_paths", None),
+        projection_root=getattr(args, "_projection_root", None),
     )
     if args.json:
         print(json.dumps(hits, ensure_ascii=False))

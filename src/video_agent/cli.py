@@ -81,8 +81,13 @@ def _dedupe_workspace_paths(paths: list[Path]) -> list[Path]:
 
 
 def _projection_root(args) -> Path | None:
-    """Freeze the projection owner before mutable aliases can be retargeted."""
-    if args.command in {"audit", "index", "view", "wiki"}:
+    """Freeze the projection owner before mutable aliases can be retargeted.
+
+    search가 포함되는 이유: 문서 캐시 DB(.tca-search-cache.db)의 소유
+    루트를 리스 스냅샷과 같은 시점에 확정해야 핸들러가 캐시를 쓸 수 있다
+    — 루트 없이 경로 튜플만 받으면 부분집합과 구분이 안 돼 캐시를 우회한다.
+    """
+    if args.command in {"audit", "index", "view", "wiki", "search"}:
         return corpus_root(args.roots or None).resolve()
     if args.command == "bridge":
         return Path(args.corpus).resolve()

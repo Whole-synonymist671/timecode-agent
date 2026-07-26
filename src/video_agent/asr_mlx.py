@@ -181,7 +181,9 @@ def transcribe_mlx(
         clip_timestamps=clips,
         condition_on_previous_text=condition_on_previous_text,
         hallucination_silence_threshold=1.0,
-        verbose=None,
+        # mlx_whisper 규약: None=침묵, False=tqdm 진행바, True=텍스트 출력.
+        # 사람 터미널에서만 진행바를 켠다(비-tty는 기존과 동일하게 침묵).
+        verbose=False if sys.stderr.isatty() else None,
     )
     parsed = segments_from_mlx_result(result)
     if not parsed[0]:

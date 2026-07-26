@@ -43,6 +43,11 @@ from .corpus_projection import (
 from .export import capture_reasons
 from .fsio import write_text_atomic
 from .image_provenance import resolve_image_path
+from .projection_cache import (
+    load_projection_cache,
+    save_projection_cache,
+    workspace_fingerprint,
+)
 from .search import corpus_root
 from .timestamps import fmt_ts_compact
 from .transcript_segments import load_transcript_segments
@@ -702,6 +707,14 @@ def build_view(
         if projection_root is not None
         else corpus_root(roots)
     )
+    # 포맷 솔트 — export_html/_page 렌더 포맷을 바꾸면 올려서 전량 무효화.
+    view_salt = "view-v1"
+    cache = load_projection_cache(root)
+    view_cache = cache.get("view")
+    if not isinstance(view_cache, dict):
+        view_cache = {}
+    cache["view"] = view_cache
+
     rows: list[tuple[WorkspaceMeta, str]] = []
     for d in ws_dirs:
         ws = Workspace.load(d)
@@ -712,10 +725,19 @@ def build_view(
             rel = meta["name"]
         depth = len(Path(rel).parts)
         corpus_backlink = "../" * depth + "view.html"
-        write_text_atomic(
-            ws.root / "view.html",
-            export_html(ws, corpus_backlink=corpus_backlink),
+        # 소스 영상은 워크스페이스 밖에 있을 수 있고, 사라지면 렌더가
+        # "영상 없음" 안내로 바뀐다 — 존재·상태를 지문에 포함해야 이동·삭제
+        # 후의 스킵이 죽은 <video> 링크를 남기지 않는다.
+        fingerprint = workspace_fingerprint(
+            d, salt=view_salt, extra_paths=[ws.video]
         )
+        dest_ws = ws.root / "view.html"
+        if view_cache.get(rel) != fingerprint or not dest_ws.is_file():
+            write_text_atomic(
+                dest_ws,
+                export_html(ws, corpus_backlink=corpus_backlink),
+            )
+            view_cache[rel] = fingerprint
         rows.append((meta, rel))
 
     sorted_rows = sorted(rows, key=lambda item: item[1])
@@ -827,4 +849,5 @@ def build_view(
 
     dest = root / "view.html"
     write_text_atomic(dest, _page("코퍼스 브라우저", body, _CORPUS_JS))
+    save_projection_cache(root, cache, live_keys={rel for _, rel in rows})
     return dest, len(rows)

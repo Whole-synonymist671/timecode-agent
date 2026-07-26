@@ -24,11 +24,17 @@ dependencies = [
     "numpy",
     "ocrmac>=1.0; sys_platform == 'darwin'",
     "opentimelineio>=0.17",
-    "pyannote.audio>=3.1,<5",
     "pyobjc-framework-SoundAnalysis>=10.0; sys_platform == 'darwin'",
     "sherpa-onnx==1.13.4",
     "sherpa-onnx-core==1.13.4",
 ]
+
+# 유일한 extra — pyannote는 HF 계정 게이트가 걸려 토큰 없는 설치에서는
+# 한 번도 실행되지 않는 코드인데 torch 계열 700MB+를 강제했다(전수점검
+# 2026-07-26, 사용자 결정). 화자 분리는 게이트 없는 sherpa가 기본 설치로
+# 즉시 동작하고, scripts/install.sh 기본 경로는 이 extra를 포함한다.
+[project.optional-dependencies]
+diarize = ["pyannote.audio>=3.1,<5"]
 
 [project.urls]
 Repository = "https://github.com/mupozg823/timecode-agent"
