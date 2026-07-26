@@ -141,6 +141,7 @@ class Workspace:
         ws = cls(Path(root))
         if not ws.manifest_path.is_file():
             raise FileNotFoundError(
-                f"not a va workspace (manifest.json missing): {ws.root}"
+                f"va 워크스페이스가 아닙니다 (manifest.json 없음): {ws.root}"
+                " — 경로를 확인하거나 `va ingest`로 먼저 만드십시오"
             )
         return ws

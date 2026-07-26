@@ -126,7 +126,9 @@ input[type=search]:hover{border-color:var(--border-strong)}
 .gchip b{font-variant-numeric:tabular-nums;font-weight:600;opacity:.75;
  margin-left:4px}
 .table-scroll{overflow-x:auto;border:1px solid var(--border);
- border-radius:10px;background:var(--surface)}
+ border-radius:10px;background:var(--surface);scrollbar-width:thin}
+.table-scroll table{min-width:640px}
+.table-scroll td:nth-child(3){white-space:nowrap}
 table{border-collapse:collapse;width:100%;font-size:14px}
 th,td{border-bottom:1px solid var(--border);padding:7px 12px;
  text-align:left;vertical-align:top}
@@ -176,7 +178,8 @@ video{width:100%;max-height:52vh;background:#000;border-radius:10px;
 .cp{display:grid;grid-template-columns:150px 1fr;gap:4px 16px;
  background:var(--surface);border:1px solid var(--border);border-radius:10px;
  padding:10px 14px;transition:background-color .12s ease-out,
- border-color .12s ease-out}
+ border-color .12s ease-out;
+ content-visibility:auto;contain-intrinsic-size:auto 110px}
 .cp:hover{border-color:var(--border-strong)}
 .cp.active{background:var(--surface-2);border-color:var(--accent)}
 .cp .when{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
@@ -195,7 +198,7 @@ video{width:100%;max-height:52vh;background:#000;border-radius:10px;
 .notice{background:var(--warn-bg);color:var(--warn);border-radius:8px;
  padding:10px 14px;font-size:13px}
 .evidence{display:grid;gap:12px;
- grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+ grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr))}
 .evidence figure{margin:0;background:var(--surface);
  border:1px solid var(--border);border-radius:10px;overflow:hidden}
 .evidence img{display:block;width:100%;height:auto;max-height:340px;
@@ -219,11 +222,16 @@ summary:hover{color:var(--text)}
  white-space:nowrap;display:none}
 .chip{display:inline-block;margin:2px 8px 2px 0;font-size:13px}
 [hidden]{display:none!important}
+@media (max-width:520px){
+ main{padding:16px 14px 48px}
+ .cp{grid-template-columns:1fr}
+ .cp .when{flex-direction:row;flex-wrap:wrap;align-items:center}}
 @media (min-width:1100px){
  .split{display:grid;grid-template-columns:minmax(0,58%) minmax(0,1fr);
   gap:0 28px;align-items:start}
  .split .player-rail{position:sticky;top:16px;padding:0}
  video{max-height:none;aspect-ratio:16/9;object-fit:contain}}
+@media (min-width:1600px){main{max-width:1440px}}
 @media (prefers-reduced-motion:reduce){
  *{transition-duration:.01ms!important;animation:none!important}}
 """.strip()
@@ -232,12 +240,24 @@ _SEEK_JS = """
 const v=document.querySelector('video');let stop=null;
 const spans=[...document.querySelectorAll('[data-span-start]')];
 const marks=[...document.querySelectorAll('.timeline button')];
+function seekTo(t){if(!v||!isFinite(t))return;
+ if(v.readyState>=1)v.currentTime=t;
+ else v.addEventListener('loadedmetadata',()=>{v.currentTime=t;},
+  {once:true});}
 document.querySelectorAll('.seek').forEach(el=>el.addEventListener('click',()=>{
  if(!v)return;const t=+el.dataset.start;
  stop=el.dataset.end?+el.dataset.end:null;
- if(v.readyState>=1){v.currentTime=t;v.play();}
- else{v.addEventListener('loadedmetadata',()=>{v.currentTime=t;},
-  {once:true});v.play();}}));
+ seekTo(t);v.play();
+ const card=el.closest('.cp');
+ if(card&&card.id)
+  history.replaceState(null,'','#'+encodeURIComponent(card.id));}));
+let h=location.hash.slice(1);
+try{h=decodeURIComponent(h);}catch(e){}
+if(h.startsWith('t=')){seekTo(+h.slice(2));}
+else if(h){const el=document.getElementById(h);
+ if(el&&el.classList.contains('cp')){
+  el.scrollIntoView({block:'center'});el.classList.add('active');
+  seekTo(+el.dataset.spanStart);}}
 const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
 const follow=document.getElementById('follow');
 let raf=0,activeEl=null;
@@ -263,6 +283,15 @@ const rows=[...document.querySelectorAll('tbody tr[data-title]')];
 const cnt=document.getElementById('cnt');
 const emptyRow=document.getElementById('empty-row');
 let group='';
+function syncHash(){
+ const p=new URLSearchParams();
+ const graphView=document.getElementById('graph-view');
+ if(graphView&&!graphView.hidden)p.set('view','graph');
+ if(q.value)p.set('q',q.value);
+ if(group)p.set('g',group);
+ const s=p.toString();
+ history.replaceState(null,'',
+  s?'#'+s:location.pathname+location.search);}
 function apply(){
  const t=q.value.toLowerCase();let n=0;
  for(const r of rows){
@@ -271,7 +300,8 @@ function apply(){
   r.hidden=!hit;if(hit)n++;}
  if(cnt)cnt.textContent=n===rows.length?
   rows.length+'편 모두 표시':rows.length+'편 중 '+n+'편';
- if(emptyRow)emptyRow.hidden=n>0;}
+ if(emptyRow)emptyRow.hidden=n>0;
+ syncHash();}
 let deb=0;
 q.addEventListener('input',()=>{clearTimeout(deb);deb=setTimeout(apply,80);});
 addEventListener('keydown',e=>{
@@ -303,10 +333,16 @@ function show(graph){
  listView.hidden=graph;graphView.hidden=!graph;
  listBtn.setAttribute('aria-pressed',String(!graph));
  graphBtn.setAttribute('aria-pressed',String(graph));
- if(graph&&!graphStarted){graphStarted=true;initGraph();}}
+ if(graph&&!graphStarted){graphStarted=true;initGraph();}
+ syncHash();}
 listBtn.addEventListener('click',()=>show(false));
 graphBtn.addEventListener('click',()=>show(true));
-if(location.hash==='#graph')show(true);
+const hp=new URLSearchParams(location.hash.slice(1));
+if(hp.get('q'))q.value=hp.get('q');
+if(hp.get('g')){group=hp.get('g');
+ document.querySelectorAll('.gchip').forEach(x=>
+  x.setAttribute('aria-pressed',String(x.dataset.group===group)));}
+if(location.hash==='#graph'||hp.get('view')==='graph')show(true);
 // ---- hand-rolled force graph (no d3: zero-framework contract) ----
 function initGraph(){
  const data=JSON.parse(document.getElementById('graph-data').textContent);
@@ -370,7 +406,8 @@ function initGraph(){
    ctx.globalAlpha=dim?C.dim:1;
    ctx.fillStyle=n.type==='ws'?C.ws:C.ent;
    ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,7);ctx.fill();}
-  ctx.font=(11/scale)+'px sans-serif';ctx.textAlign='center';
+  ctx.font=(11/scale)+'px Pretendard,-apple-system,sans-serif';
+  ctx.textAlign='center';
   ctx.lineWidth=3/scale;ctx.strokeStyle=C.halo;ctx.lineJoin='round';
   for(const n of N){
    const focus=n===hover||(hi&&hi.has(n));
@@ -435,7 +472,25 @@ function initGraph(){
   tip.style.display='none';draw();});
  canvas.addEventListener('wheel',e=>{e.preventDefault();userNav=true;
   scale=Math.min(2.5,Math.max(.35,scale*(e.deltaY<0?1.1:.9)));draw();},
-  {passive:false});}
+  {passive:false});
+ function showTip(n){tip.style.display='block';
+  tip.style.left=(n.x*scale+W/2+ox)+'px';
+  tip.style.top=(n.y*scale+H/2+oy)+'px';
+  tip.textContent=n.label;}
+ let kb=-1;
+ canvas.addEventListener('keydown',e=>{
+  if(e.key==='Enter'&&hover){
+   if(hover.type==='ws'&&hover.href)location.href=hover.href;
+   else if(hover.type==='ent'){show(false);q.value=hover.label;apply();
+    q.focus();}
+   return;}
+  const step=e.key==='ArrowRight'||e.key==='ArrowDown'?1:
+   e.key==='ArrowLeft'||e.key==='ArrowUp'?-1:0;
+  if(!step)return;
+  e.preventDefault();userNav=true;
+  kb=(kb+step+N.length)%N.length;hover=N[kb];showTip(hover);draw();});
+ canvas.addEventListener('blur',()=>{if(kb>=0){hover=null;kb=-1;
+  tip.style.display='none';draw();}});}
 apply();
 """.strip()
 
@@ -599,11 +654,13 @@ def export_html(
                  '<div class="cps">']
         for c in cps:
             s, e = c["start"], c["end"]
+            card_id = html.escape(c["checkpoint_id"], quote=True)
             speakers = " · ".join(c["speakers"])
             who = (f'<span class="who">{html.escape(speakers)}</span>'
                    if speakers else "")
             body.append(
-                f'<article class="cp" data-span-start="{s:.2f}"'
+                f'<article class="cp" id="{card_id}"'
+                f' data-span-start="{s:.2f}"'
                 f' data-span-end="{e:.2f}">'
                 '<div class="when">'
                 + _seek(s, e, f"{fmt_ts_compact(s)}–{fmt_ts_compact(e)}")
@@ -708,7 +765,9 @@ def build_view(
         else corpus_root(roots)
     )
     # 포맷 솔트 — export_html/_page 렌더 포맷을 바꾸면 올려서 전량 무효화.
-    view_salt = "view-v1"
+    # 렌더러가 바뀔 때마다 범프 — 안 올리면 투영 캐시가 기존 코퍼스의
+    # 플레이어 페이지를 낡은 렌더로 영구 스킵한다(2026-07-26 실측).
+    view_salt = "view-v2"
     cache = load_projection_cache(root)
     view_cache = cache.get("view")
     if not isinstance(view_cache, dict):
@@ -838,11 +897,12 @@ def build_view(
 
     body.append(
         '<div id="graph-view" hidden><div class="graph-wrap">'
-        '<canvas role="img" aria-label="영상과 인물의 연결 그래프 — '
-        '목록과 같은 내용입니다"></canvas>'
+        '<canvas tabindex="0" role="application" '
+        'aria-label="영상과 인물의 연결 그래프 — 목록과 같은 내용입니다. '
+        '화살표 키로 점 사이를 이동하고 Enter로 엽니다"></canvas>'
         '<div class="graph-tip"></div>'
         '<p class="graph-hint">점 클릭: 영상 열기·인물 검색 · '
-        '끌기: 자리 이동 · 휠: 확대</p>'
+        '끌기: 자리 이동 · 휠: 확대 · 화살표 키: 점 이동</p>'
         "</div></div>")
     body.append('<script type="application/json" id="graph-data">'
                 + _graph_payload(sorted_rows) + "</script>")

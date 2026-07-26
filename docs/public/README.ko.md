@@ -245,6 +245,11 @@ grep -q '^001 ' cut.edl
 만든다 — 단일 HTML 파일, 서버 없음, 프론트엔드 프레임워크 없음.
 페이지는 OS 색상 모드를 따르며, 아래는 다크 모드다.
 
+![라이브 데모 — 코퍼스 라이브러리 검색, 관계 그래프 드래그, 장면 기록 클릭으로 플레이어가 해당 타임스탬프로 점프](https://raw.githubusercontent.com/mupozg823/timecode-agent/main/assets/screenshots/tca-demo.gif)
+
+*라이브 투어: 라이브러리를 필터링하고 관계 그래프를 탐색한 뒤, 장면
+기록을 클릭하면 플레이어가 그 타임스탬프로 점프한다.*
+
 | 코퍼스 라이브러리 — 검색·유형·상태·장면 수 | 관계 그래프 — 영상 ↔ 인물·항목 |
 |---|---|
 | ![검색과 영상별 유형·검증 상태를 갖춘 코퍼스 라이브러리 목록 뷰](assets/screenshots/corpus-browser.jpg) | ![영상과 기록된 엔티티를 잇는 캔버스 관계 그래프](assets/screenshots/corpus-graph.jpg) |
@@ -253,11 +258,12 @@ grep -q '^001 ' cut.edl
 |---|---|
 | ![체크포인트 카드와 활성 구간 하이라이트를 갖춘 Sintel 예고편 워크스페이스 플레이어](assets/screenshots/player-sintel.jpg) | ![커버리지 타임라인과 확신도 라벨 장면 기록을 갖춘 Elephants Dream 워크스페이스 플레이어](assets/screenshots/player-elephants-dream.jpg) |
 
-스크린샷은 Blender Foundation 오픈무비 *Sintel*·*Elephants Dream*·
-*Big Buck Bunny*(CC-BY, © Blender Foundation —
-[blender.org](https://www.blender.org/about/projects/))를 이 도구로 직접
-분석해 만든 데모 코퍼스다 — [재현 가능한 벤치마크](#재현-가능한-벤치마크)가
-쓰는 것과 같은, 누구나 받을 수 있는 픽스처다.
+데모 GIF와 스크린샷은 Blender Foundation 오픈무비 *Sintel*·*Elephants
+Dream*·*Big Buck Bunny*·*Tears of Steel*·*Charge*(CC-BY, © Blender
+Foundation — [blender.org](https://www.blender.org/about/projects/))를 이
+도구로 직접 분석해 만든 데모 코퍼스다 —
+[재현 가능한 벤치마크](#재현-가능한-벤치마크)가 쓰는 것과 같은, 누구나
+받을 수 있는 픽스처를 포함한다.
 
 ## 무엇이 남는가
 

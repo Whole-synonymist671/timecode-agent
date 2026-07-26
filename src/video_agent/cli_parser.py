@@ -9,6 +9,10 @@ from . import cli_commands_global as global_commands
 from . import cli_commands_workspace as workspace_commands
 from .cli_runtime_parser import add_runtime_parser
 
+# 19개 명령이 공유하는 필수 위치 인자 — help 없이는 usage 한 줄만 보고
+# 무엇을 넣는지 알 수 없다 (도구표면 감사 2026-07-26).
+_WS_HELP = "워크스페이스 경로 (예: va-out/<영상이름>)"
+
 
 def _package_version() -> str:
     try:
@@ -68,14 +72,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("brief",
                        help="one-call agent briefing (manifest/transcript/"
                             "signals/checkpoints/mode)")
-    p.add_argument("workspace")
+    p.add_argument("workspace", help=_WS_HELP)
     p.add_argument("--why", default=None,
                    help="분석 의도/질문 — 관련 전사 구간·체크포인트를 "
                         "브리핑에 표면화")
     p.set_defaults(func=workspace_commands.cmd_brief)
 
     p = sub.add_parser("capture", help="capture frames at timestamps")
-    p.add_argument("workspace")
+    p.add_argument("workspace", help=_WS_HELP)
     p.add_argument("-t", action="append", required=True,
                    help="timestamp (12.5 | 1:23.5 | 01:02:03), repeatable")
     p.add_argument("--crop",
@@ -99,14 +103,16 @@ def build_parser() -> argparse.ArgumentParser:
                        help="budget-aware capture plan — signal weight + "
                             "time-coverage greedy pick when candidates "
                             "exceed the capture budget")
-    p.add_argument("workspace")
-    p.add_argument("--budget", type=int, default=12)
+    p.add_argument("workspace", help=_WS_HELP)
+    p.add_argument("--budget", type=int, default=12,
+                   help="캡처 예산 장수 (default 12)")
     p.add_argument("--start", default=None,
                    help="window start (12.5 | 1:23.5 | 01:02:03)")
     p.add_argument("--end", default=None, help="window end")
     p.add_argument("--min-gap", type=float, default=1.0, dest="min_gap",
                    help="minimum seconds between picks (default 1.0)")
-    p.add_argument("--json", action="store_true", dest="as_json")
+    p.add_argument("--json", action="store_true", dest="as_json",
+                   help="JSON 출력")
     p.add_argument("--explain", action="store_true",
                    help="탈락 후보와 사유(min_gap_displaced/budget_exhausted) 표시")
     p.add_argument("--legible-endcard", action="store_true",
@@ -118,7 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("boundary-eval",
                        help="컷 경계 결정적 자문 지표(쿨레쇼프 루프 기계 "
                             "게이트) — 발화 절단·호흡·음량 급차·조인 병치")
-    p.add_argument("workspace")
+    p.add_argument("workspace", help=_WS_HELP)
     p.add_argument("-t", dest="ts", action="append",
                    help="cut timestamp (12.5 | 1:23.5 | 01:02:03), repeatable")
     p.add_argument("--sequence", default=None,
@@ -126,22 +132,25 @@ def build_parser() -> argparse.ArgumentParser:
                         "한 번에 게이트 (-t와 배타)")
     p.add_argument("--window", type=float, default=0.4,
                    help="경계 전후 RMS 측정 구간 초 (default 0.4)")
-    p.add_argument("--json", action="store_true", dest="as_json")
+    p.add_argument("--json", action="store_true", dest="as_json",
+                   help="JSON 출력")
     p.set_defaults(func=workspace_commands.cmd_boundary_eval)
 
     p = sub.add_parser("audioevents",
                        help="semantic audio events — laughter/applause/"
                             "cheering via bundled macOS Sound Analysis")
-    p.add_argument("workspace")
-    p.add_argument("--min-conf", type=float, default=0.6)
-    p.add_argument("--json", action="store_true")
+    p.add_argument("workspace", help=_WS_HELP)
+    p.add_argument("--min-conf", type=float, default=0.6,
+                   help="이벤트 최소 확신도 (default 0.6)")
+    p.add_argument("--json", action="store_true", help="JSON 출력")
     p.set_defaults(func=workspace_commands.cmd_audioevents)
 
     p = sub.add_parser("diarize",
                        help="pyannote 3.1 화자분리 — transcript에 speaker 병합 "
                             "(HF 토큰/약관 동의 시 pyannote, 아니면 sherpa)")
-    p.add_argument("workspace")
-    p.add_argument("--num-speakers", type=int)
+    p.add_argument("workspace", help=_WS_HELP)
+    p.add_argument("--num-speakers", type=int,
+                   help="화자 수 힌트 (생략 시 자동 추정)")
     p.add_argument("--backend", choices=["auto", "pyannote", "sherpa"],
                    default="auto",
                    help="auto=pyannote(HF토큰) 우선, 실패 시 무게이트 sherpa 폴백")
@@ -150,16 +159,17 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("faces",
                        help="on-screen face count per timestamp (Vision; "
                             "cast-composition signal)")
-    p.add_argument("workspace")
-    p.add_argument("-t", action="append", required=True)
-    p.add_argument("--crop")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("workspace", help=_WS_HELP)
+    p.add_argument("-t", action="append", required=True,
+                   help="timestamp (12.5 | 1:23.5 | 01:02:03), repeatable")
+    p.add_argument("--crop", help="ffmpeg crop expr w:h:x:y")
+    p.add_argument("--json", action="store_true", help="JSON 출력")
     p.set_defaults(func=workspace_commands.cmd_faces)
 
     p = sub.add_parser("ocr",
                        help="on-device Vision OCR of frames (nameplates/"
                             "killfeed/overlays; bundled on macOS)")
-    p.add_argument("workspace")
+    p.add_argument("workspace", help=_WS_HELP)
     p.add_argument("-t", action="append",
                    help="timestamp, repeatable")
     p.add_argument("--every", help="scan mode: OCR every N seconds, merge "
@@ -169,32 +179,36 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--end", help="scan span end (default duration)")
     p.add_argument("--crop", help="ffmpeg crop expr w:h:x:y")
     p.add_argument("--lang", help="comma list, default ko-KR,en-US")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", help="JSON 출력")
     p.set_defaults(func=workspace_commands.cmd_ocr)
 
     p = sub.add_parser("filmstrip",
                        help="tile n low-res frames of a span into ONE image "
                             "(overview scan, not verification)")
-    p.add_argument("workspace")
+    p.add_argument("workspace", help=_WS_HELP)
     p.add_argument("--start", help="default: 0 (full-video overview)")
     p.add_argument("--end", help="default: video duration")
-    p.add_argument("-n", type=int, default=9)
-    p.add_argument("--cols", type=int, default=3)
+    p.add_argument("-n", type=int, default=9,
+                   help="타일에 넣을 프레임 수 (default 9)")
+    p.add_argument("--cols", type=int, default=3,
+                   help="타일 열 수 (default 3)")
     p.add_argument("--auto", action="store_true",
                    help="density-rule tiling: split span into <=112s windows "
                         "with <=7s cell gap (multiple tiles as needed)")
     p.set_defaults(func=workspace_commands.cmd_filmstrip)
 
-    p = sub.add_parser("checkpoint", help="checkpoint index")
+    p = sub.add_parser("checkpoint",
+                       help="사실 원장 — 시간 주소 체크포인트 "
+                            "(append-only, same id = update)")
     cp_sub = p.add_subparsers(dest="cp_command", required=True)
     pa = cp_sub.add_parser("add", help="append (same id = update)")
-    pa.add_argument("workspace")
+    pa.add_argument("workspace", help=_WS_HELP)
     pa.add_argument("--json", help="checkpoint object as JSON string")
     pa.add_argument("--json-file", help="path to JSON file, '-' for stdin")
     pa.set_defaults(func=workspace_commands.cmd_checkpoint_add)
-    pl = cp_sub.add_parser("list")
-    pl.add_argument("workspace")
-    pl.add_argument("--json", action="store_true")
+    pl = cp_sub.add_parser("list", help="기록된 체크포인트 목록")
+    pl.add_argument("workspace", help=_WS_HELP)
+    pl.add_argument("--json", action="store_true", help="JSON 출력")
     pl.set_defaults(func=workspace_commands.cmd_checkpoint_list)
 
     p = sub.add_parser(
@@ -202,13 +216,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="편집 결정 원장 — 근거 강제 컷 시퀀스 (append, same id = update)")
     seq_sub = p.add_subparsers(dest="seq_command", required=True)
     sa = seq_sub.add_parser("add", help="append (same id = update)")
-    sa.add_argument("workspace")
+    sa.add_argument("workspace", help=_WS_HELP)
     sa.add_argument("--json", help="sequence object as JSON string")
     sa.add_argument("--json-file", help="path to JSON file, '-' for stdin")
     sa.set_defaults(func=workspace_commands.cmd_sequence_add)
-    sl = seq_sub.add_parser("list")
-    sl.add_argument("workspace")
-    sl.add_argument("--json", action="store_true")
+    sl = seq_sub.add_parser("list", help="기록된 편집안 목록")
+    sl.add_argument("workspace", help=_WS_HELP)
+    sl.add_argument("--json", action="store_true", help="JSON 출력")
     sl.set_defaults(func=workspace_commands.cmd_sequence_list)
 
     p = sub.add_parser("glossary",
@@ -229,40 +243,41 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=global_commands.cmd_bridge)
 
     p = sub.add_parser("status", help="coverage / gaps / confidence")
-    p.add_argument("workspace")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("workspace", help=_WS_HELP)
+    p.add_argument("--json", action="store_true", help="JSON 출력")
     p.set_defaults(func=workspace_commands.cmd_status)
 
     p = sub.add_parser("audit",
                        help="deterministic corpus readiness and evidence audit")
     p.add_argument("roots", nargs="*",
                    help="va-out roots or workspace dirs (default ./va-out)")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", help="JSON 출력")
     p.set_defaults(func=global_commands.cmd_audit)
 
     p = sub.add_parser("highlights",
                        help="audio-energy highlight candidates (placement)")
-    p.add_argument("workspace")
+    p.add_argument("workspace", help=_WS_HELP)
     p.add_argument("--top", type=int, default=5)
     p.add_argument("--window", type=float, default=0.5,
                    help="RMS window seconds (default 0.5)")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", help="JSON 출력")
     p.set_defaults(func=workspace_commands.cmd_highlights)
 
     p = sub.add_parser("scenes",
                        help="scene-change timestamps (no frame extraction)")
-    p.add_argument("workspace")
-    p.add_argument("--threshold", type=float, default=0.3)
+    p.add_argument("workspace", help=_WS_HELP)
+    p.add_argument("--threshold", type=float, default=0.3,
+                   help="장면전환 감도 0~1, 낮을수록 민감 (default 0.3)")
     p.add_argument("--adaptive", action="store_true",
                    help="also catch gradual changes vs rolling average")
     p.add_argument("--color-check", action="store_true",
                    help="cross-check detections with brightness-free H-S "
                         "histogram to flag lighting false positives")
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", help="JSON 출력")
     p.set_defaults(func=workspace_commands.cmd_scenes)
 
     p = sub.add_parser("clip", help="extract a clip")
-    p.add_argument("workspace")
+    p.add_argument("workspace", help=_WS_HELP)
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True)
     p.add_argument("-o", "--output", help="filename inside clips/")
@@ -275,14 +290,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "export", help="EDL / xmeml / FCPXML / OTIO / SRT / markdown handoff")
-    p.add_argument("workspace")
+    p.add_argument("workspace", help=_WS_HELP)
     p.add_argument("--format", required=True,
                    choices=["edl", "md", "xml", "otio", "fcpxml", "srt"])
     p.add_argument("--ids", help="comma-separated checkpoint ids")
     p.add_argument("--sequence",
                    help="편집안 id(seq-001) — 편집 원장의 컷으로 내보내기 "
                         "(edl/otio/fcpxml 전용, --ids와 배타)")
-    p.add_argument("-o", "--output")
+    p.add_argument("-o", "--output", help="출력 파일 경로 (생략 시 stdout)")
     p.add_argument("--receipt", action="store_true",
                    help="<output>.receipt.json 사이드카 — 산출물 sha256+"
                         "근거 체크포인트 리비전/상태 (원장 없는 수신측 검증용, "
@@ -296,13 +311,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("roots", nargs="*",
                    help="va-out roots or workspace dirs (default ./va-out)")
     p.add_argument("--top", type=int, default=10)
-    p.add_argument("--json", action="store_true")
+    p.add_argument("--json", action="store_true", help="JSON 출력")
     p.set_defaults(func=global_commands.cmd_search)
 
     p = sub.add_parser("reframe",
                        help="16:9 clip -> 9:16 shorts: pan (hard-cut between "
                             "face ROIs by motion energy) or split (stacked)")
-    p.add_argument("workspace")
+    p.add_argument("workspace", help=_WS_HELP)
     p.add_argument("clip", help="path or filename inside clips/")
     p.add_argument("--roi", action="append", required=True,
                    metavar="x,y,w,h",

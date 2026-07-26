@@ -250,6 +250,11 @@ terminal sequence and export it with `--sequence`.
 players — single HTML files, no server and no frontend framework. The pages
 follow the OS color scheme; dark mode is shown here.
 
+![Live demo — searching the corpus library, dragging the relation graph, then clicking scene records to jump the player to their timestamps](https://raw.githubusercontent.com/mupozg823/timecode-agent/main/assets/screenshots/tca-demo.gif)
+
+*Live tour: filter the library, explore the relation graph, then click a
+scene record — the player jumps to that timestamp.*
+
 | Corpus library — search, type, status, scene counts | Relation graph — videos ↔ people and entities |
 |---|---|
 | ![Corpus library list view with search, per-video type and verification status](assets/screenshots/corpus-browser.jpg) | ![Canvas relation graph connecting videos to recorded entities](assets/screenshots/corpus-graph.jpg) |
@@ -258,10 +263,11 @@ follow the OS color scheme; dark mode is shown here.
 |---|---|
 | ![Sintel trailer workspace player with checkpoint cards and active-span highlight](assets/screenshots/player-sintel.jpg) | ![Elephants Dream workspace player with coverage timeline and confidence-labeled scene records](assets/screenshots/player-elephants-dream.jpg) |
 
-The screenshots show a demo corpus built by running the tool on the Blender
-Foundation open movies *Sintel*, *Elephants Dream*, and *Big Buck Bunny*
+The demo GIF and screenshots show a demo corpus built by running the tool on
+the Blender Foundation open movies *Sintel*, *Elephants Dream*, *Big Buck
+Bunny*, *Tears of Steel*, and *Charge*
 (CC-BY, © Blender Foundation — [blender.org](https://www.blender.org/about/projects/)) —
-the same freely fetchable fixtures the
+including the same freely fetchable fixtures the
 [reproducible benchmark](#reproducible-benchmark) uses.
 
 ## What persists

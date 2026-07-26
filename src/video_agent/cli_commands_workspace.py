@@ -270,12 +270,22 @@ def cmd_checkpoint_add(args) -> int:
         raw = args.json
     if not raw:
         raise ValueError(CHECKPOINT_INPUT_REQUIRED_MESSAGE)
-    obj = json.loads(raw)
+    # 파싱만 따로 감싼다 — append 중 손상된 manifest가 던지는
+    # JSONDecodeError를 페이로드 탓으로 오귀책하면 안 된다(리뷰 2026-07-26).
+    try:
+        obj = json.loads(raw)
+    except json.JSONDecodeError as e:
+        # sequence add와 대칭 — 파싱 실패도 스키마 예시까지 안내한다
+        # (한글·따옴표 셸 이스케이프 사고가 가장 흔한 원인).
+        raise ValueError(
+            f"JSON 파싱 실패({e}) — 한글·따옴표가 섞이면 "
+            "`--json-file -` + heredoc으로 넣으십시오\n"
+            + CHECKPOINT_SCHEMA_EXAMPLE) from None
     try:
         added = append_checkpoint(ws, obj)
     except ValueError as e:
         raise ValueError(str(e) + "\n" + CHECKPOINT_SCHEMA_EXAMPLE) from None
-    print(f"checkpoint {added['id']} ({added['status']}) recorded")
+    print(f"checkpoint {added['id']} ({added['status']}) 기록됨")
     return 0
 
 
@@ -491,11 +501,18 @@ def cmd_sequence_add(args) -> int:
         raise ValueError(
             "--json 또는 --json-file이 필요합니다\n" + SEQUENCE_SCHEMA_EXAMPLE)
     try:
-        added = append_sequence(ws, json.loads(raw))
+        obj = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"JSON 파싱 실패({e}) — 한글·따옴표가 섞이면 "
+            "`--json-file -` + heredoc으로 넣으십시오\n"
+            + SEQUENCE_SCHEMA_EXAMPLE) from None
+    try:
+        added = append_sequence(ws, obj)
     except ValueError as e:
         raise ValueError(str(e) + "\n" + SEQUENCE_SCHEMA_EXAMPLE) from None
     print(f"sequence {added['id']} ({added['status']}, "
-          f"컷 {len(added['cuts'])}개) recorded")
+          f"컷 {len(added['cuts'])}개) 기록됨")
     return 0
 
 
