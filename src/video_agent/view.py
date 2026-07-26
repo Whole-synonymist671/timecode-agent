@@ -9,9 +9,12 @@ workspace that plays the local video with checkpoint/transcript
 click-to-seek (the one interaction plain markdown cannot do), plus one
 corpus page with a filter box, a sortable dense table, and a canvas force
 graph of workspace↔entity co-occurrence (hand-rolled — vendoring d3 would
-break the zero-framework commitment; at this corpus scale an O(n²) tick is
-comfortably real-time). Regenerated on demand by `va view`, never by
-daemons. Media purged by `va gc` degrades to thumbnails-only with a notice.
+break the zero-framework commitment; the repulsion tick uses a uniform
+300px grid so cost stays local-pair bounded as the corpus grows, and the
+graph caps entities at the best-connected ``_GRAPH_ENTITY_MAX`` with a
+visible notice — the table always lists every workspace). Regenerated on
+demand by `va view`, never by daemons. Media purged by `va gc` degrades
+to thumbnails-only with a notice.
 
 Design contract (production-frontend, 2026-07): dark-first OKLCH tokens with
 an automatic light theme, hierarchy from borders and an 8px rhythm (no glow,
@@ -361,7 +364,11 @@ function initGraph(){
  const deg=new Map();
  for(const l of L){deg.set(l.s,(deg.get(l.s)||0)+1);
   deg.set(l.t,(deg.get(l.t)||0)+1);}
- N.forEach((n,i)=>{const a=i/N.length*Math.PI*2,r=160+40*(i%5);
+ // 초기 산포를 sqrt(N)로 키워 셀 점유 밀도를 상수로 유지 — 고정 환형은
+ // 노드가 늘수록 같은 셀에 몰려 그리드 지역성이 초반 틱에서 무력했다.
+ const spread=Math.max(1,Math.sqrt(N.length/150));
+ N.forEach((n,i)=>{const a=i/N.length*Math.PI*2,
+  r=(160+40*(i%5))*spread;
   n.x=Math.cos(a)*r;n.y=Math.sin(a)*r;n.vx=0;n.vy=0;
   n.r=n.type==='ws'?7:Math.min(4+(deg.get(n.id)||1)*.7,9);});
  const byId=new Map(N.map(n=>[n.id,n]));
@@ -378,11 +385,21 @@ function initGraph(){
  let alpha=1,hover=null,drag=null,panning=false,px=0,py=0;
  let downX=0,downY=0,movedFar=false;
  function tick(){
-  for(let i=0;i<N.length;i++){const a=N[i];
-   for(let j=i+1;j<N.length;j++){const b=N[j];
-    let dx=a.x-b.x,dy=a.y-b.y;let d2=dx*dx+dy*dy||1;
-    if(d2<90000){const f=900/d2;const d=Math.sqrt(d2);
-     dx/=d;dy/=d;a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f;}}}
+  // 반발력은 300px 컷오프 밖에서 0 — 균일 그리드(300px 셀)의 이웃 셀만
+  // 보면 전 쌍 O(n²)이 지역 쌍으로 준다(같은 컷오프라 물리 동일 · 각
+  // 쌍을 양쪽에서 한 번씩 방문하니 힘은 자기 노드에만 더한다).
+  const CELL=300,grid=new Map();
+  const cellOf=v=>Math.floor(v/CELL);
+  for(const n of N){const k=cellOf(n.x)+':'+cellOf(n.y);
+   const c=grid.get(k);if(c)c.push(n);else grid.set(k,[n]);}
+  for(const a of N){
+   const cx=cellOf(a.x),cy=cellOf(a.y);
+   for(let gx=cx-1;gx<=cx+1;gx++)for(let gy=cy-1;gy<=cy+1;gy++){
+    const cell=grid.get(gx+':'+gy);if(!cell)continue;
+    for(const b of cell){if(b===a)continue;
+     const dx=a.x-b.x,dy=a.y-b.y;const d2=dx*dx+dy*dy||1;
+     if(d2<90000){const f=900/d2;const d=Math.sqrt(d2);
+      a.vx+=dx/d*f;a.vy+=dy/d*f;}}}}
   for(const e of E){let dx=e.b.x-e.a.x,dy=e.b.y-e.a.y;
    const d=Math.sqrt(dx*dx+dy*dy)||1;const f=(d-70)*.012;
    dx/=d;dy/=d;e.a.vx+=dx*f*d*.02;e.a.vy+=dy*f*d*.02;
@@ -428,7 +445,9 @@ function initGraph(){
   ox=-(x0+x1)/2*scale;oy=-(y0+y1)/2*scale;}
  let userNav=false;
  const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
- if(reduced){for(let i=0;i<400;i++)tick();fit();draw();}
+ if(reduced){const t0=performance.now();
+  for(let i=0;i<400&&performance.now()-t0<1500;i++)tick();
+  fit();draw();}
  else{(function loop(){if(alpha>0.012||drag){alpha*=.995;tick();
    if(!userNav)fit();
    draw();requestAnimationFrame(loop);}})();}
@@ -725,8 +744,22 @@ def export_html(
     return _page(meta["title"], body, _SEEK_JS)
 
 
-def _graph_payload(rows: list[tuple[WorkspaceMeta, str]]) -> str:
-    """workspace↔entity co-occurrence graph, embedded as JSON."""
+# 그래프 엔티티 노드 상한 — 코퍼스가 커져도 임베드 JSON과 시뮬레이션
+# 비용을 유계로 유지한다. 워크스페이스 노드·목록 테이블은 전량이 계약이고,
+# 엔티티만 연결수 상위로 자른다(발동 시 그래프 힌트에 명시 — 무언 캡 금지).
+_GRAPH_ENTITY_MAX = 400
+
+
+def _graph_payload(rows: list[tuple[WorkspaceMeta, str]]) -> tuple[str, int]:
+    """workspace↔entity co-occurrence graph JSON과 잘린 엔티티 수."""
+    appearances: dict[str, int] = {}
+    for r, _rel in rows:
+        for lb in set(r["labels"]):
+            appearances[lb] = appearances.get(lb, 0) + 1
+    kept = set(sorted(
+        appearances, key=lambda lb: (-appearances[lb], lb)
+    )[:_GRAPH_ENTITY_MAX])
+    dropped = len(appearances) - len(kept)
     nodes: list[dict[str, object]] = []
     links: list[dict[str, str]] = []
     seen_entities: set[str] = set()
@@ -735,6 +768,8 @@ def _graph_payload(rows: list[tuple[WorkspaceMeta, str]]) -> str:
         nodes.append({"id": ws_id, "label": r["title"] or r["name"],
                       "type": "ws", "href": f"{quote(rel)}/view.html"})
         for lb in r["labels"]:
+            if lb not in kept:
+                continue
             ent_id = f"ent:{lb}"
             if lb not in seen_entities:
                 seen_entities.add(lb)
@@ -742,7 +777,7 @@ def _graph_payload(rows: list[tuple[WorkspaceMeta, str]]) -> str:
             links.append({"s": ws_id, "t": ent_id})
     payload = json.dumps({"nodes": nodes, "links": links},
                          ensure_ascii=False, separators=(",", ":"))
-    return payload.replace("</", "<\\/")
+    return payload.replace("</", "<\\/"), dropped
 
 
 def build_view(
@@ -897,17 +932,25 @@ def build_view(
         body.append("</p></details>")
     body.append("</div>")  # close #list-view
 
+    graph_payload, dropped_entities = _graph_payload(sorted_rows)
+    truncation_note = (
+        f" · 연결 많은 인물·항목 상위 {_GRAPH_ENTITY_MAX}개만 표시"
+        f"(나머지 {dropped_entities}개는 목록·검색에서)"
+        if dropped_entities else ""
+    )
     body.append(
         '<div id="graph-view" hidden><div class="graph-wrap">'
         '<canvas tabindex="0" role="application" '
         'aria-label="영상과 인물의 연결 그래프 — 목록과 같은 내용입니다. '
-        '화살표 키로 점 사이를 이동하고 Enter로 엽니다"></canvas>'
+        '화살표 키로 점 사이를 이동하고 Enter로 엽니다" '
+        'aria-describedby="graph-hint"></canvas>'
         '<div class="graph-tip"></div>'
-        '<p class="graph-hint">점 클릭: 영상 열기·인물 검색 · '
-        '끌기: 자리 이동 · 휠: 확대 · 화살표 키: 점 이동</p>'
+        '<p class="graph-hint" id="graph-hint">점 클릭: 영상 열기·인물 검색 · '
+        '끌기: 자리 이동 · 휠: 확대 · 화살표 키: 점 이동'
+        f"{truncation_note}</p>"
         "</div></div>")
     body.append('<script type="application/json" id="graph-data">'
-                + _graph_payload(sorted_rows) + "</script>")
+                + graph_payload + "</script>")
 
     dest = root / "view.html"
     write_text_atomic(dest, _page("코퍼스 브라우저", body, _CORPUS_JS))

@@ -114,11 +114,12 @@ COLLAPSE_COVERAGE = 0.5
 COLLAPSE_MIN_SPEECH = 60.0
 
 
-def _vad_speech_seconds(wav: Path) -> float | None:
-    """전사가 쓰는 것과 같은 VAD로 본 발화 총량 — 붕괴 판정의 접지선.
+def _vad_speech_chunks(wav: Path) -> list[tuple[float, float]] | None:
+    """전사와 같은 VAD로 본 발화 구간 목록(초) — 붕괴 형상 판정용.
 
-    전사량이 적은 게 '조용한 영상'인지 '죽은 디코딩'인지는 전사문만
-    봐서는 구분되지 않는다. 판정에는 전사와 독립된 기준이 필요하다.
+    총량(_vad_speech_seconds)은 "얼마나 빠졌는가"만 말한다. 빠진 발화가
+    스톨 지점 앞에 있는지 뒤에 있는지(프리픽스 절단 vs 중간 구멍)는
+    구간 목록이 있어야 가른다.
     """
     try:
         from faster_whisper.audio import decode_audio
@@ -132,7 +133,19 @@ def _vad_speech_seconds(wav: Path) -> float | None:
         chunks = get_speech_timestamps(audio, VadOptions())
     except Exception:        # VAD 실패로 전사를 버릴 이유는 없다 (fail-open)
         return None
-    return sum(c["end"] - c["start"] for c in chunks) / 16000
+    return [(c["start"] / 16000, c["end"] / 16000) for c in chunks]
+
+
+def _vad_speech_seconds(wav: Path) -> float | None:
+    """전사가 쓰는 것과 같은 VAD로 본 발화 총량 — 붕괴 판정의 접지선.
+
+    전사량이 적은 게 '조용한 영상'인지 '죽은 디코딩'인지는 전사문만
+    봐서는 구분되지 않는다. 판정에는 전사와 독립된 기준이 필요하다.
+    """
+    chunks = _vad_speech_chunks(wav)
+    if chunks is None:
+        return None
+    return sum(end - start for start, end in chunks)
 
 
 def _spoken_seconds(segments: list[Segment]) -> float:

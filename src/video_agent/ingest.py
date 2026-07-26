@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sys
+import tempfile
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict, replace
@@ -38,10 +39,12 @@ from .ingest_transcribe import (
     _transcribe_faster_whisper as _transcribe_faster_whisper,
 )
 from .ingest_transcribe import _transcript_collapsed as _transcript_collapsed
+from .ingest_transcribe import _vad_speech_chunks as _vad_speech_chunks
 from .ingest_transcribe import _vad_speech_seconds as _vad_speech_seconds
 from .ingest_transcribe import _write_srt as _write_srt
 from .ingest_transcribe import resegment_by_words as resegment_by_words
 from .ingest_transcribe import segments_from_whisper as segments_from_whisper
+from .proc import run
 from .workspace import Workspace
 from .workspace_lock import stable_workspace_lock
 
@@ -153,6 +156,54 @@ def _transcribe_selected(
         condition_on_previous_text=condition_on_previous_text,
         backend=backend,
     )
+
+
+def _retranscribe_tail(
+    wav: Path,
+    stall: float,
+    model: str,
+    lang: str | None,
+    hotwords: str | None,
+    *,
+    backend: str,
+) -> tuple[list[Segment], list[dict], str | None]:
+    """붕괴 지점 이후 구간만 다시 받아써 워크스페이스 시간축으로 되돌린다.
+
+    꼬리 wav를 임시로 잘라 전사하고 타임스탬프를 stall만큼 되민다.
+    추출 실패는 빈 결과 — 호출자의 "꼬리 무발화 = 원본 유지"와 동치로
+    합류시켜 복구 실패가 전사를 잃게 하지 않는다.
+    """
+    with tempfile.TemporaryDirectory(prefix="va-tail-") as scratch:
+        tail_wav = Path(scratch) / "tail.wav"
+        extracted = run(
+            ["ffmpeg", "-y", "-loglevel", "error", "-ss", f"{stall:.3f}",
+             "-i", str(wav), "-c:a", "pcm_s16le", str(tail_wav)],
+            capture_output=True, text=True,
+        )
+        if extracted.returncode != 0 or not tail_wav.is_file():
+            print(
+                f"꼬리 추출 실패 — 복구를 건너뜁니다: "
+                f"{extracted.stderr.strip()}",
+                file=sys.stderr,
+            )
+            return [], [], None
+        tail_segments, tail_words, tail_language = _transcribe_selected(
+            tail_wav,
+            model,
+            lang,
+            hotwords,
+            backend=backend,
+            condition_on_previous_text=False,
+        )
+    for segment in tail_segments:
+        segment.start = round(segment.start + stall, 3)
+        segment.end = round(segment.end + stall, 3)
+    shifted_words = [
+        {**word, "start": round(word["start"] + stall, 3),
+         "end": round(word["end"] + stall, 3)}
+        for word in tail_words
+    ]
+    return tail_segments, shifted_words, tail_language
 
 
 def _ingest_workspace_root(video: Path, out: Path | None) -> Path:
@@ -373,41 +424,104 @@ def _ingest_locked(
         # 아래 brief에서 "발화 19%·시각 주도"라는 결론으로 승격된다.
         speech_seconds = _vad_speech_seconds(wav) if segments else None
         if _transcript_collapsed(segments, speech_seconds):
+            # 붕괴의 대표 형상은 "도중에 죽음"(실측 2026-07-25: 1092초
+            # 정지, 앞부분 정상)이지만, 판정식은 총량만 보므로 "중간에
+            # 구멍이 뚫리고 마지막 큐만 살아남은" 형상도 통과한다. 두
+            # 형상은 복구 전략이 다르다: 프리픽스가 그 자체로 건강할 때만
+            # 멈춘 지점 이후를 다시 받아쓰고(전체 재디코딩의 절반 이하
+            # 비용·프리픽스 보존이라 손실 불가), 아니면 종전대로 전체를
+            # 문맥 이어받기 없이 다시 받아써 비교 채택한다.
+            stall = segments[-1].end
+            speech_chunks = _vad_speech_chunks(wav)
+            prefix_speech = (
+                sum(
+                    max(0.0, min(end, stall) - start)
+                    for start, end in speech_chunks
+                    if start < stall
+                )
+                if speech_chunks is not None
+                else None
+            )
+            prefix_intact = prefix_speech is not None and (
+                prefix_speech <= 1e-9
+                or _spoken_seconds(segments) / prefix_speech
+                >= COLLAPSE_COVERAGE
+            )
             print(
                 f"전사 붕괴 의심: 말소리 {speech_seconds:.0f}초 중 "
                 f"{_spoken_seconds(segments):.0f}초만 옮겨 적혔습니다 "
-                f"(마지막 {segments[-1].end:.0f}초에서 멈춤) — 앞 문맥 "
-                f"이어받기를 끄고 다시 받아씁니다",
+                f"(마지막 {stall:.0f}초에서 멈춤) — "
+                + ("멈춘 지점부터 다시 받아씁니다"
+                   if prefix_intact
+                   else "빠진 발화가 그 앞에도 있어 전체를 문맥 이어받기 "
+                        "없이 다시 받아씁니다"),
                 file=sys.stderr,
             )
-            _ASR_TRACE.label = None
-            alt, alt_words, alt_language = _transcribe_selected(
-                wav,
-                model,
-                lang,
-                applied_hotwords,
-                backend=asr_backend,
-                condition_on_previous_text=False,
-            )
-            # 재시도가 다른 백엔드로 흘렀을 수 있다(예: MLX 폴백) — 라벨은
-            # 채택된 쪽에만 결박한다.
-            alt_backend_used = _ASR_TRACE.label
-            alt = resegment_by_words(alt, alt_words)
-            if _spoken_seconds(alt) > _spoken_seconds(segments):
-                segments, words, language = alt, alt_words, alt_language
-                asr_backend_used = alt_backend_used
-                repair = "condition_on_previous_text=False"
-                print(
-                    f"다시 받아쓴 쪽을 씁니다: {len(segments)}개 문장 · "
-                    f"{_spoken_seconds(segments):.0f}초",
-                    file=sys.stderr,
+            if prefix_intact:
+                _ASR_TRACE.label = None
+                tail_segments, tail_words, tail_language = _retranscribe_tail(
+                    wav,
+                    stall,
+                    model,
+                    lang,
+                    applied_hotwords,
+                    backend=asr_backend,
                 )
+                # 꼬리 재시도가 다른 백엔드로 흘렀을 수 있다(예: MLX 폴백).
+                tail_backend_used = _ASR_TRACE.label
+                tail_segments = resegment_by_words(tail_segments, tail_words)
+                if _spoken_seconds(tail_segments) > 0:
+                    segments = segments + tail_segments
+                    for index, segment in enumerate(segments):
+                        segment.id = index
+                    words = words + tail_words
+                    language = language or tail_language
+                    if (tail_backend_used
+                            and tail_backend_used != asr_backend_used):
+                        asr_backend_used = (
+                            f"{asr_backend_used}+{tail_backend_used}(tail)"
+                        )
+                    repair = f"tail-retranscribe(from={stall:.1f}s)"
+                    print(
+                        f"꼬리 복구 채택: +{len(tail_segments)}개 문장 · "
+                        f"총 {_spoken_seconds(segments):.0f}초",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        "멈춘 지점 이후에서 말소리를 얻지 못했습니다 — 처음 "
+                        "것을 그대로 씁니다(말소리가 적은 영상일 수 있음)",
+                        file=sys.stderr,
+                    )
             else:
-                print(
-                    "다시 받아써도 늘지 않았습니다 — 처음 것을 그대로 "
-                    "씁니다(말소리가 적은 영상일 수 있음)",
-                    file=sys.stderr,
+                # 중간 구멍 형상(또는 VAD 불가로 형상 불명) — 꼬리 복구는
+                # 구멍을 못 메우므로 종전 전체 재시도를 폴백으로 보존한다.
+                _ASR_TRACE.label = None
+                alt, alt_words, alt_language = _transcribe_selected(
+                    wav,
+                    model,
+                    lang,
+                    applied_hotwords,
+                    backend=asr_backend,
+                    condition_on_previous_text=False,
                 )
+                alt_backend_used = _ASR_TRACE.label
+                alt = resegment_by_words(alt, alt_words)
+                if _spoken_seconds(alt) > _spoken_seconds(segments):
+                    segments, words, language = alt, alt_words, alt_language
+                    asr_backend_used = alt_backend_used
+                    repair = "condition_on_previous_text=False"
+                    print(
+                        f"다시 받아쓴 쪽을 씁니다: {len(segments)}개 문장 · "
+                        f"{_spoken_seconds(segments):.0f}초",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        "다시 받아써도 늘지 않았습니다 — 처음 것을 그대로 "
+                        "씁니다(말소리가 적은 영상일 수 있음)",
+                        file=sys.stderr,
+                    )
     if not segments:
         # cause-specific diagnosis: say WHY the transcript is empty instead
         # of a generic warning
