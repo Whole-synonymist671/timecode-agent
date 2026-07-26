@@ -12,6 +12,7 @@ def probe(video: Path) -> dict:
     video = Path(video)
     if not video.is_file():
         raise FileNotFoundError(f"video not found: {video}")
+    stat_before = video.stat()
     cmd = [
         "ffprobe", "-v", "error", "-print_format", "json",
         "-show_format", "-show_streams", "-show_chapters", str(video),
@@ -88,4 +89,21 @@ def probe(video: Path) -> dict:
     creation = (data["format"].get("tags") or {}).get("creation_time")
     if creation:
         meta["creation_time"] = creation
+    # 소스 파일 지문 — 재-ingest가 같은 파일이면 ffprobe를 건너뛰고 기존
+    # 관측을 재사용할 수 있게 한다(캐시들과 같은 stat 지문 계약).
+    # ffprobe 실행 중 원자 교체가 끼어들면 옛 inode의 관측에 새 파일의
+    # 지문이 붙어 낡은 메타데이터가 무기한 재사용된다 — 실행 전후
+    # identity(size·mtime_ns·inode)가 같을 때만 기록한다. 지문 부재는
+    # 재사용 대상에서 빠져 다음 ingest가 재관측한다(자기 치유).
+    try:
+        stat_after = video.stat()
+    except OSError:
+        stat_after = None
+    if stat_after is not None and (
+        (stat_before.st_size, stat_before.st_mtime_ns, stat_before.st_ino)
+        == (stat_after.st_size, stat_after.st_mtime_ns, stat_after.st_ino)
+    ):
+        meta["source_stat"] = {
+            "size": stat_after.st_size, "mtime_ns": stat_after.st_mtime_ns,
+        }
     return meta

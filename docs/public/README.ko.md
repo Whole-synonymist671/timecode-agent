@@ -351,7 +351,8 @@ argparse 또는 유효 런타임 기본값이며 문서상의 추측이 아니�
 | `ingest` | `--max-height` | `1080` | URL 다운로드 해상도 상한 |
 | `ingest` | `--cookies-from-browser` | 없음 | `chrome`\|`safari`\|`firefox` — 로그인 벽이 있는 소스에 브라우저 쿠키를 `yt-dlp`로 전달; 자기 세션이 필요할 때만 |
 | `ingest` | `-o`, `--out` | `./va-out/<stem>`(로컬 파일) 또는 `./va-out/url-<md5-prefix>`(URL) | 워크스페이스 디렉터리 — URL은 재개 경로를 미리 알 수 있게 항상 지정 |
-| `ingest` | `--model` | `small` | whisper 크기(`tiny`\|`base`\|`small`\|`medium`\|`large-v3`), 또는 任意 CTranslate2 모델 — 로컬 경로나 HF repo id |
+| `ingest` | `--model` | `small` | whisper 크기(`tiny`\|`base`\|`small`\|`medium`\|`large-v3`), 또는 임의의 CTranslate2 모델 — 로컬 경로나 HF repo id |
+| `ingest` | `--asr-backend` | `auto` | ASR 실행 경로(`auto`\|`faster-whisper`\|`mlx`) — `auto`는 런타임 프로파일을 따른다: `balanced`/`quality`=faster-whisper, Apple Silicon `low-power`=MLX+VAD+품질 폴백 |
 | `ingest` | `--lang` | 자동 감지 | 예: `ko`, `en` |
 | `ingest` | `--hotwords` | `va glossary` 캐시에서 자동 로드 | whisper에 공급되는 도메인 용어 |
 | `ingest` | `--force-whisper` | 꺼짐 | 영상에 자막이 있어도 전사 |

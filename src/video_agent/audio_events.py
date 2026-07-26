@@ -100,7 +100,8 @@ def compute_audio_events(
     min_conf: float = 0.6,
     labels: set[str] | None = None,
 ) -> list[dict]:
-    if not ws.manifest["has_audio"]:
+    classified = ws.manifest["has_audio"]
+    if not classified:
         print("warning: no audio stream — no audio events", file=sys.stderr)
         events: list[dict] = []
     else:
@@ -112,4 +113,10 @@ def compute_audio_events(
         events = merge_hits(hits)
     write_text_atomic(ws.root / "audio_events.json",
                       json.dumps(events, ensure_ascii=False, indent=1))
+    if classified:
+        # P1 지각 provenance — 이벤트 라벨은 학습 모델 산물이라 어떤
+        # 분류기 세대가 만들었는지 없으면 재현·감사 불가(diarize와 동일
+        # 계약). 산출물이 실제로 남은 뒤에만 스탬프 — 쓰기가 실패했는데
+        # manifest가 부재 산출물의 provenance를 주장하면 안 된다.
+        ws.stamp_tool("audioevents", "macos-sound-analysis:v1")
     return events

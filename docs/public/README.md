@@ -358,6 +358,7 @@ the argparse or effective runtime defaults, not documentation guesses.
 | `ingest` | `--cookies-from-browser` | none | `chrome`\|`safari`\|`firefox` — pass browser cookies to `yt-dlp` for a login-walled source; only needed when the source requires your own session |
 | `ingest` | `-o`, `--out` | `./va-out/<stem>` (local file) or `./va-out/url-<md5-prefix>` (URL) | workspace directory — always pass it for URLs so the resume path is known in advance |
 | `ingest` | `--model` | `small` | whisper size (`tiny`\|`base`\|`small`\|`medium`\|`large-v3`), or any CTranslate2 model — local path or HF repo id |
+| `ingest` | `--asr-backend` | `auto` | ASR execution path (`auto`\|`faster-whisper`\|`mlx`) — `auto` follows the runtime profile: `balanced`/`quality` = faster-whisper, Apple Silicon `low-power` = MLX with VAD and a quality fallback |
 | `ingest` | `--lang` | auto-detect | e.g. `ko`, `en` |
 | `ingest` | `--hotwords` | auto-loaded from the `va glossary` cache | domain terms fed to whisper |
 | `ingest` | `--force-whisper` | off | transcribe even when the video ships captions |

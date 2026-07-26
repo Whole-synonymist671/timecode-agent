@@ -463,6 +463,7 @@ def _workspace_purge_locks(path: Path) -> Iterator[None]:
             workspace.sequence_lock_path,
             workspace.checkpoint_lock_path,
             workspace.image_provenance_lock_path,
+            workspace.manifest_lock_path,
         ):
             stack.enter_context(
                 stable_workspace_lock(

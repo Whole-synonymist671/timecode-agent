@@ -11,6 +11,7 @@ from .corpus_projection import (
     NARRATIVE_START,
     READINESS_KO,
     STATUS_KO,
+    WorkspaceMeta,
     checkpoint_anchor,
     escape_markdown_alt_text,
     escape_markdown_text,
@@ -54,9 +55,15 @@ def export_md(
     *,
     image_records: list[ImageRecord] | None = None,
     index_backlink: str = "../INDEX.md",
+    meta: WorkspaceMeta | None = None,
 ) -> str:
-    """Render scene hierarchy, checkpoints, and causal image backlinks."""
-    meta = ws_meta(ws)
+    """Render scene hierarchy, checkpoints, and causal image backlinks.
+
+    meta는 호출자가 이미 계산한 ws_meta를 재사용하는 통로다 — build_index가
+    행 구성에 쓴 것을 넘겨 워크스페이스당 이중 계산(전사 재적재·mode 추천·
+    status 스냅샷)을 없앤다(codex/grounded-wiki-promotion d44bf49 재구현).
+    """
+    meta = ws_meta(ws) if meta is None else meta
     records = load_image_records(ws) if image_records is None else image_records
     backlinks = checkpoint_image_backlinks(ws)
     counts = image_counts(records, backlinks)

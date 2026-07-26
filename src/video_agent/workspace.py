@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .fsio import write_text_atomic
 from .probe import probe
+from .workspace_lock import stable_workspace_lock
 
 # 파일시스템·Obsidian 양쪽에서 문제를 일으키는 문자. `[]#^|`는 경로로는
 # 허용되지만 위키 링크 문법과 충돌한다.
@@ -53,6 +54,42 @@ def load_json(path):
         return None
 
 
+# probe()가 manifest에 남기는 관측 필드 — 재-ingest 재사용의 화이트리스트.
+# 이 목록 밖의 manifest 필드(모델·언어·tools 스탬프)는 ingest가 다시 쓴다.
+_PROBE_FIELDS = (
+    "duration", "width", "height", "fps", "has_audio",
+    "timing", "color", "chapters", "creation_time", "source_stat",
+)
+# probe()가 항상 남기는 필수 관측 — 하나라도 없으면 절단된 manifest다.
+_PROBE_REQUIRED = ("duration", "width", "height", "fps", "has_audio")
+
+
+def _reusable_probe(ws: "Workspace", video: Path) -> dict | None:
+    """같은 파일의 재-ingest면 기존 manifest의 ffprobe 관측을 재사용한다.
+
+    판정은 경로 + stat 지문(size·mtime_ns) — 프레임·오디오 캐시와 같은
+    계약이다. 지문 없는 구버전 manifest·파일 교체·이동은 None을 돌려
+    재관측(ffprobe)으로 넘긴다.
+    """
+    old = load_json(ws.manifest_path)
+    if not isinstance(old, dict) or old.get("video") != str(video):
+        return None
+    if any(key not in old for key in _PROBE_REQUIRED):
+        # 절단된 manifest — 재-ingest가 재관측으로 복구하는 경로를 막으면
+        # 안 된다. 불완전 재사용은 하류(ingest)의 KeyError로 이어진다.
+        return None
+    fingerprint = old.get("source_stat")
+    if not fingerprint:
+        return None
+    try:
+        stat = video.stat()
+    except OSError:
+        return None
+    if fingerprint != {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}:
+        return None
+    return {key: old[key] for key in _PROBE_FIELDS if key in old}
+
+
 class Workspace:
     def __init__(self, root: Path):
         self.root = Path(root)
@@ -67,6 +104,7 @@ class Workspace:
         lambda self: self.root / ".image-provenance.lock"
     )
     sequence_lock_path = property(lambda self: self.root / ".sequences.lock")
+    manifest_lock_path = property(lambda self: self.root / ".manifest.lock")
     workspace_lock_path = property(lambda self: self.root / ".workspace.lock")
     clips_dir = property(lambda self: self.root / "clips")
 
@@ -100,14 +138,23 @@ class Workspace:
 
         지각 출력은 물리 측정이 아니라 모델 산물이라 버전 의존 —
         어떤 도구가 만든 신호인지 없으면 재현·감사가 불가하다.
+
+        병합은 배타 잠금 아래에서 한다: 지각 명령들(diarize·ocr·
+        audioevents)은 공유 lease로 동시 실행이 허용되는데, 무잠금
+        read-modify-write는 마지막 원자 치환이 상대의 스탬프를 지운다.
+        사이드카 부재(구버전 워크스페이스)는 디렉터리 inode 폴백 —
+        CLI lease가 그 경우 배타라 covered 중첩으로 안전하다.
         """
-        manifest = self.manifest
-        tools = dict(manifest.get("tools") or {})
-        if tools.get(name) == info:
-            return
-        tools[name] = info
-        manifest["tools"] = tools
-        self.save_manifest(manifest)
+        with stable_workspace_lock(
+            self.root, self.manifest_lock_path, exclusive=True
+        ):
+            manifest = self.manifest
+            tools = dict(manifest.get("tools") or {})
+            if tools.get(name) == info:
+                return
+            tools[name] = info
+            manifest["tools"] = tools
+            self.save_manifest(manifest)
 
     @property
     def video(self) -> Path:
@@ -121,12 +168,15 @@ class Workspace:
         published = ws.manifest_path.is_file()
         ws.frames_dir.mkdir(parents=True, exist_ok=True)
         ws.clips_dir.mkdir(parents=True, exist_ok=True)
-        meta = probe(video)
+        meta = _reusable_probe(ws, video) if published else None
+        if meta is None:
+            meta = probe(video)
         if not published:
             ws.workspace_lock_path.touch(mode=0o600, exist_ok=True)
             ws.checkpoint_lock_path.touch(mode=0o600, exist_ok=True)
             ws.image_provenance_lock_path.touch(mode=0o600, exist_ok=True)
             ws.sequence_lock_path.touch(mode=0o600, exist_ok=True)
+            ws.manifest_lock_path.touch(mode=0o600, exist_ok=True)
         ws.save_manifest(
             {
                 "video": str(video),

@@ -12,6 +12,10 @@ from __future__ import annotations
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel
 
 
 @dataclass
@@ -65,13 +69,32 @@ def segments_from_whisper(raw_segments) -> tuple[list[Segment], list[dict]]:
     return segments, words_all
 
 
+# (모델명, 인스턴스) 단일 슬롯 — lru_cache(maxsize=1)는 미스 시 새 모델
+# 생성이 끝난 뒤에야 이전 항목을 퇴거해 교체 순간 두 모델이 동시 상주한다
+# (whisper 모델은 수백 MB~GB). 교체 전 슬롯을 비워 참조를 먼저 놓는다.
+_WHISPER_MODEL: tuple[str, WhisperModel] | None = None
+
+
+def _whisper_model(model: str) -> WhisperModel:
+    """프로세스 내 모델 재사용 — 오염·붕괴 재전사가 같은 ingest에서 같은
+    모델을 2~3회 로드하던 것을 봉합. 단일 슬롯이라 CLI 한 실행(모델 1개)은
+    물론, 장수 프로세스의 모델 교체도 이전 모델을 붙잡지 않는다."""
+    global _WHISPER_MODEL
+    if _WHISPER_MODEL is not None and _WHISPER_MODEL[0] == model:
+        return _WHISPER_MODEL[1]
+    _WHISPER_MODEL = None
+    from faster_whisper import WhisperModel  # lazy: heavy import + model download
+
+    instance = WhisperModel(model, device="cpu", compute_type="int8")
+    _WHISPER_MODEL = (model, instance)
+    return instance
+
+
 def _transcribe_faster_whisper(
     wav: Path, model: str, lang: str | None, hotwords: str | None = None,
     condition_on_previous_text: bool = True,
 ) -> tuple[list[Segment], list[dict], str | None]:
-    from faster_whisper import WhisperModel  # lazy: heavy import + model download
-
-    wm = WhisperModel(model, device="cpu", compute_type="int8")
+    wm = _whisper_model(model)
     raw_segments, info = wm.transcribe(
         str(wav), language=lang, vad_filter=True, word_timestamps=True,
         hotwords=hotwords,

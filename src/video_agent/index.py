@@ -258,8 +258,12 @@ def build_index(
             rel = d.name
         sequences = load_sequences(ws)
         stem = ws.doc_stem
+        # 행 구성과 scene-log 렌더가 같은 meta를 공유 — ws_meta는 전사
+        # 적재·mode 추천·status 스냅샷을 포함해 워크스페이스당 두 번
+        # 계산하기엔 비싸다.
+        meta = ws_meta(ws)
         row: _IndexedWorkspaceMeta = {
-            **ws_meta(ws),
+            **meta,
             "images": len(image_records),
             "edits": len(sequences),
             "rel": rel,
@@ -369,7 +373,8 @@ def build_index(
             write_text_atomic(
                 scene_log_path,
                 export_md(
-                    ws, None, image_records=image_records, index_backlink=backlink
+                    ws, None, image_records=image_records,
+                    index_backlink=backlink, meta=meta,
                 ),
             )
             for stale_scene_log in stale_scene_logs:
