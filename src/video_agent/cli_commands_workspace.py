@@ -293,7 +293,7 @@ def _checkpoint_from_flags(args) -> dict | None:
         except ValueError as e:
             raise WorkspaceCommandUsageError(f"--span: {e}") from None
     segments = getattr(args, "segments", None)
-    if segments:
+    if segments is not None:
         try:
             obj["segments"] = [
                 int(s) for s in segments.split(",") if s.strip()

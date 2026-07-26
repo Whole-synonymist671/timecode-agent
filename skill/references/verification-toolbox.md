@@ -1,140 +1,132 @@
-# 검증 도구 상세 — diarize·OCR·faces·scenes 감별
+# Verification toolbox
 
-SKILL.md 루프 §2의 도구별 심층 사용법. 트리거 조건과 핵심 제약은 SKILL.md가
-정본이고, 이 문서는 사용 예·백엔드·해석 요령만 담는다.
+Deep reference for loop §2. `SKILL.md` owns triggers and hard limits; this file
+owns backend details, examples, and interpretation.
 
-## 전사 신뢰 — mode 판정 전 확인 (§0-1 상세)
+## Transcript trust before mode selection
 
-전사량이 적은 게 조용한 영상인지 죽은 디코딩인지는 전사문만 봐서는
-구분되지 않는다. manifest가 판정 근거를 남긴다.
+Sparse text alone cannot distinguish a quiet video from a stalled decode. Use
+manifest evidence:
 
-- `transcript_coverage` — VAD가 본 발화 대비 옮겨 적힌 비율.
-  **발화 총량 60초 이상**에서 0.5 미만이면 붕괴 신호다(그 조건이 붕괴
-  게이트의 임계이고, 짧은 오디오는 한 문장이 비율을 좌우해 게이트가
-  면제한다 — 짧은 클립의 낮은 값은 죽은 전사의 증거가 아니다).
-  붕괴로 판단되면 잘린 전사를 "발화 희소 = 시각 주도"로 읽지 않는다
-  (43분 영상이 1092초에서 정지한 실측 사고). 낮은 커버리지로 남았으면
-  mode를 단정하지 말고 그 사실을 답변에 명시한다.
-- `transcript_repair` — 자동 복구가 돌았다는 표시. `tail-retranscribe`는
-  멈춘 지점부터 다시 받아쓴 것이므로 그 경계 뒤 전사를 표본 확인한다.
-- `hotwords_rejected` — glossary 용어가 반복 환각을 만들어 제외된 기록.
-  그 전사에는 도메인 용어 오청이 남아 있을 수 있다.
-- `asr_backend` — 어떤 백엔드가 만든 전사인지(MLX 폴백 여부 포함).
-  전사 품질을 비교·재현할 때의 좌표다.
+- `transcript_coverage`: transcribed speech divided by VAD speech. Below 0.5
+  with at least 60 seconds of speech signals collapse. Short audio is exempt;
+  one sentence dominates its ratio. Never infer “visual-led” from a collapsed
+  transcript. Disclose unresolved low coverage instead of forcing a mode.
+- `transcript_repair`: automatic recovery ran. After `tail-retranscribe`, sample
+  transcript content after the repair boundary.
+- `hotwords_rejected`: glossary terms caused repetitive hallucination and were
+  removed; domain-term errors may remain.
+- `asr_backend`: backend provenance, including MLX fallback, for comparison and
+  reproduction.
 
-## ingest·조망 예외
+## Ingest and overview exceptions
 
-- 전사가 비어 있으면 균등 4~6장 조망으로 시각 중심 가설을 시작한다.
-- 검열음+BGM 변형본은 VAD를 교란할 수 있다. 같은 콘텐츠의 원본이 있으면
-  전사는 원본에서, 변형본은 시각 확인에 쓴다.
-- 장면전환이 분당 10개 이상이면 몽타주 신호로 보고 scene 경계를 캡처
-  후보로 올린다.
-- 파일명이 `-00N` 분할본이면 시작·결말이 없을 수 있음을 체크포인트에
-  명시한다.
-- 조망은 칸 간격이 7초를 넘지 않게 하고, 타일 하나는 112초 이하로 유지한다.
-  `va filmstrip --auto`가 이 밀도를 자동 적용한다.
-- 균등 조망은 꼬리 1~2초를 놓칠 수 있다. 고정 `duration-1` 대신
-  `va keyframes <ws> --legible-endcard`가 고른 판독 가능한
-  꼬리 프레임을 확인한다.
+- Empty transcript: start with 4–6 evenly spaced overview frames.
+- Censored/BGM variants can confuse VAD. When an original exists, transcribe the
+  original and visually inspect the variant.
+- At least 10 scene changes per minute is a montage signal; prioritize scene
+  boundaries.
+- For `-00N` split filenames, record that the part may omit start or ending.
+- Keep overview gaps at most 7 seconds and each tile at most 112 seconds.
+  `va filmstrip --auto` applies this density.
+- Even sampling can miss the final 1–2 seconds. Do not hardcode `duration-1`;
+  inspect the readable tail chosen by
+  `va keyframes <ws> --legible-endcard`.
 
-## 시간·방향·미세 디테일
+## Time, direction, and fine detail
 
-- 특정 시간 span 질문은 그 구간의 전사 전량, 1~2초 간격 밀집 조망,
-  경계 전후 각 1장을 함께 확인한다. 행동 질문은 구간 안의 전→후 변화를
-  답한다.
-- 왼쪽·오른쪽 질문은 카메라와 피사체 기준을 모두 검토한다. 판별 근거가
-  없으면 카메라 기준을 쓰고 확신도를 낮춘다.
-- 소지품·복장·신체 상태는 0.3~0.5초 간격 연속 프레임으로 판독한다.
-  격한 동작은 `va capture <ws> -t <t> --sharp --reason <신호>`로
-  모션블러가 덜한 후보를 고른다.
-- 한 검증 라운드는 캡처 6장 이하로 유지한다. 후보가 전체 예산을 넘으면
-  `va keyframes <ws> --budget N`의 결정적 부분집합을 사용한다.
+- Time-specific questions require the complete span transcript, a 1–2 second
+  dense overview, and one frame on each boundary. For actions, answer the
+  before→after change.
+- For left/right, evaluate camera and subject frames. With no discriminator,
+  use camera/viewer coordinates and lower confidence.
+- Inspect possessions, clothing, and body state across frames 0.3–0.5 seconds
+  apart. For fast or vigorous motion — sports and dancing count, not just
+  impacts — use `va capture <ws> -t <t> --sharp --reason <signal>`.
+- Keep each verification round to at most 6 captures. When candidates exceed
+  the total budget, use `va keyframes <ws> --budget N`.
 
-## 이미지 provenance·support 성립 조건 (§3 상세)
+## Image provenance and support
 
-- `--reason` 소인은 `image-provenance.jsonl`에 이미지 ID↔원인 ID 관계로
-  append-only 축적된다(`captures.json`은 레거시 호환 입력).
-- `va index`는 워크스페이스별 `<ws명>-images.md`를 재생성해
-  `INDEX.md → <ws명>-images.md → 이미지`와 `장면 로그 체크포인트 → 이미지 ID`
-  백링크를 만든다.
-- 이미지 support 성립 = `frames/` 내부 실제 decode + 추적된 provenance +
-  span 겹침 **셋 모두**. 절대·`..`·외부 symlink·부분 파일과 untracked
-  레거시는 상세 표면에만 남고 support로 인정되지 않는다.
-- 이미지가 근거로 인정되지 않은 이유는 코드로 남는다:
-  `evidence_provenance_missing`(소인 기록 없음·untracked),
-  `evidence_role_not_verification`(조망 필름스트립은 후보 선별용이라
-  단독 근거가 아니다 — full-res 캡처로 확정),
-  `evidence_time_unavailable`(시점 정보 부재),
-  `evidence_outside_checkpoint`(체크포인트 span 밖 프레임).
+- `--reason` appends image-ID↔cause-ID records to
+  `image-provenance.jsonl`; `captures.json` is legacy input only.
+- `va index` rebuilds `<workspace>-images.md` and backlinks from INDEX and scene
+  checkpoints to image IDs.
+- Image support requires all three: successful decode inside `frames/`, tracked
+  provenance, and checkpoint-span overlap. Absolute paths, `..`, external
+  symlinks, partial files, and untracked legacy files remain detail-only.
+- Rejection codes:
+  - `evidence_provenance_missing`: missing or untracked cause record.
+  - `evidence_role_not_verification`: overview filmstrip selects candidates but
+    cannot prove a claim; confirm with a full-resolution capture.
+  - `evidence_time_unavailable`: no timestamp.
+  - `evidence_outside_checkpoint`: frame outside the checkpoint span.
 
-## verification_audit 경고 코드 (§4 상세)
+## `verification_audit` codes
 
-terminal 체크포인트의 선언 근거가 없으면 `missing_support`, 과거 자유형
-근거면 `legacy_unstructured`, 프레임이 정리되어 현재 열 수 없으면
-`artifact_unavailable`, `corrected`인데 무엇이 달랐는지 적은 노트가 없으면
-`correction_note_missing`(§3의 "틀리면 차이를 기록" 의무 위반). 이 경고는
-기존 원장을 고치거나 readiness를 소급 변경하지 않는 비차단 감사다.
+- `missing_support`: a terminal checkpoint declares no support.
+- `legacy_unstructured`: support uses the old free-form shape.
+- `artifact_unavailable`: referenced media can no longer be opened.
+- `correction_note_missing`: a `corrected` checkpoint omits what changed.
 
-## diarize — 화자분리
+These are non-blocking audit findings; they do not rewrite existing ledgers or
+retroactively change readiness.
+
+## Diarization
 
 ```bash
-va diarize <ws> [--num-speakers N]   # transcript에 speaker(S0/S1…) 병합
+va diarize <ws> [--num-speakers N]
 ```
 
-- 백엔드 auto: HF 토큰이 있으면 pyannote를 시도하고 실패 시 **무게이트
-  sherpa 폴백**, 토큰이 없으면 게이트 실패를 기다리지 않고 sherpa를 바로
-  쓴다(pyannote segmentation ONNX, 완전 로컬, 10분 영상 ~70s).
-- BGM 예능은 과분할 경향 — 발화량 상위 화자 위주로 해석한다.
-- 익명 라벨(S0)과 시각 단서 라벨(명패·마이크플래그)을 대조해 "S0=명패의 인물"
-  식으로 통합하는 것은 에이전트 몫. 알려진 출연 수가 있으면
-  `--num-speakers`로 고정.
+- Auto backend: with an HF token, try pyannote then fall back to ungated
+  sherpa. Without a token, use sherpa immediately.
+- BGM-heavy entertainment tends to over-segment; prioritize speakers with the
+  most speech.
+- The agent maps anonymous labels (S0/S1) to visual nameplates or microphone
+  flags. Set known cast size with `--num-speakers`.
 
-## OCR — 화면 텍스트 판독·스캔
+## OCR
 
 ```bash
-va ocr <ws> -t 183 -t 520                                # 프레임 텍스트 추출 (ko-KR 기본)
-va ocr <ws> -t 252 --crop 'iw*0.35:ih*0.3:0:ih*0.6'      # 킬피드 영역만
-va ocr <ws> --every 5 --crop 'iw:ih*0.35:0:ih*0.6'       # 스캔 모드: N초 간격 → ocr_transcript.json
+va ocr <ws> -t 183 -t 520
+va ocr <ws> -t 252 --crop 'iw*0.35:ih*0.3:0:ih*0.6'
+va ocr <ws> --every 5 --crop 'iw:ih*0.35:0:ih*0.6'
 ```
 
-- **`--every` 스캔이 전사를 대체하는 경우**(BGM 스토리·게시판 사연 영상):
-  연속 동일 자막은 자동 병합되어 pseudo-transcript가 된다. 자막 위치를
-  조망에서 확인해 `--crop`으로 좁히면 게임 UI 텍스트 노이즈가 줄지만,
-  반복 문구가 섞여도 스토리 재구성에는 지장 없으니 과도하게 조이지 말 것.
-- **역할 분담**: 오버레이·명패처럼 깨끗한 렌더 텍스트는 OCR로 충분.
-  스타일라이즈드 텍스트(로고형 마이크 플래그 등)와 OCR 오독 의심 항목만
-  full-res 프레임을 이미지 도구로 열어 확정한다. 화면 자막이 내레이션과
-  1:1인 포맷에서는 ASR 오인식 의심 세그먼트를 OCR로 교정한다.
-- 여러 시점의 킬피드 주기 스캔(placement 신호)도 OCR 배치 처리 가능 —
-  게임플레이는 scenes 신호가 빈약하므로(하드컷 없음) 전사 킬 콜아웃
-  ("잡았어" 등)+killfeed OCR 조합이 유효하다.
-- macOS 지원 설치에서 OCR import가 실패하면 불완전 설치이므로 같은 배포본의
-  설치 절차를 다시 실행한다. Linux에서는 프레임 직접 확인으로 폴백한다.
+- `--every` can replace ASR for BGM stories or on-screen posts. Repeated text is
+  merged into `ocr_transcript.json`. Crop known subtitle regions to reduce game
+  UI noise, but do not overfit away useful repeated text.
+- OCR is enough for clean overlays and nameplates. Confirm stylized or suspect
+  text in a full-resolution frame. When captions mirror narration, use OCR to
+  correct suspect ASR segments.
+- In gameplay, combine periodic killfeed OCR with spoken kill callouts because
+  hard-cut scene signals are often weak.
+- OCR import failure on supported macOS means incomplete installation; repair
+  it. On Linux, inspect frames directly.
 
-## faces — 출연 구성·샷 스케일
+## Faces
 
 ```bash
-va faces <ws> -t <ts...>    # Vision 얼굴 수 + scale(클로즈업/미디엄/롱)
+va faces <ws> -t <ts...>
 ```
 
-- 구간별 얼굴 수 변화 = 입장/퇴장/구도 전환 신호(화자분리 보조).
-- scale은 최대 얼굴 면적비 기반 — camera-* 태그 초안에 활용.
-- 고개 숙임·가림·후면은 0으로 나올 수 있다 — 수치·스케일 모두 하한으로
-  해석(검출 0 = 롱샷 확정이 아님).
+- Face-count changes signal entrances, exits, or composition shifts.
+- Scale uses maximum face-area ratio and can seed `camera-*` tags.
+- Bowed, occluded, or rear-facing heads can yield zero. Treat counts and scale
+  as lower bounds; zero does not prove a long shot.
 
-## scenes 오탐 감별 — 조명 플래시 vs 실컷
+## Scene false positives
 
-ffmpeg 장면 점수는 luma 기반이라 밝기가 같은 색상 전환은 놓치고(균등
-샘플 폴백), 조명 플래시를 컷으로 오탐한다. **장면전환이 비정상 과다
-(분당 10+)인데 전사가 단일 상황이면 `va scenes --adaptive --color-check`로
-감별** — 밝기 배제 색 히스토그램 교차확인이 각 검출에 `색 확인`/`조명
-오탐 의심`을 표시한다. 톤 통일 팔레트(단색 애니 등)에선 실컷도 의심
-표시될 수 있으니 의심=자동 제거가 아니라 캡처 우선순위 강등으로 해석한다.
+ffmpeg scene scores are luma-based: they can miss equal-luminance color changes
+and mistake lighting flashes for cuts. When detections exceed 10 per minute but
+the transcript describes one situation, run
+`va scenes --adaptive --color-check`. Color-histogram cross-checks annotate each
+detection. A suspicion lowers capture priority; it never auto-deletes a cut,
+especially in tone-matched animation.
 
-## audioevents — 버스트의 의미 판정
+## Audio events
 
-웃음/박수/환호/비명 후보 라벨(macOS Sound Analysis, 기본 설치 포함).
-이는 학습 기반 P1 지각 신호다. 점수는 분류기 신뢰도이며 편집 중요도나
-사건의 의미가 참일 확률이 아니다. 에너지 버스트를 좁히는 placement
-후보로 쓰고, 실제 맥락과 하이라이트 여부는 전사·주변 영상·음향을
-교차확인한다.
+Sound Analysis proposes laughter, applause, cheering, and screams as learned P1
+signals. Its score is classifier confidence, not editorial importance or event
+truth. Use it to place candidates, then verify meaning with transcript,
+surrounding video, and audio.

@@ -1,6 +1,6 @@
 interface:
   display_name: "TIMECODE-AGENT"
-  short_description: "기존 영상 기억 검색·전사·선택적 검증·하이라이트·편집 인계"
+  short_description: "Video recall, transcription, verification, and edit handoff"
   default_prompt: "Use $timecode-agent to analyze a supplied video or retrieve timestamped evidence from the existing video-agent corpus, following the user's requested output."
 policy:
   allow_implicit_invocation: true

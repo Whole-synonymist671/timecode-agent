@@ -1,117 +1,108 @@
-# 산출 인계 상세 — 클립 채점·리프레이밍·NLE 포맷
+# Output handoff
 
-SKILL.md 루프 §5의 심층 자료. 의무 규칙(컷 경계 self-eval·CapCut draft
-금지·납품 인코딩)은 SKILL.md가 정본이고, 이 문서는 채점표·사용 예·포맷별
-세부만 담는다.
+Deep reference for loop §5. `SKILL.md` owns mandatory boundary self-review,
+delivery encoding, and unsupported editor-path bans. This file owns scoring,
+examples, and format details.
 
-## 편집 범위 수렴 (R_edit) — 전체 이해와 분리한다
+## Edit-scope convergence (R_edit)
 
-**적용 조건 — 구간·사건이 특정된 브리프만.** "3:16 재연 장면 잘라줘"
-처럼 소스 구간이 이미 정해진 요청이 대상이다. 개방형 발굴("최고의
-하이라이트 찾아줘")은 후보를 영상 전체와 비교해야 성립한다 — 일찍
-눈에 띈 후보만 검증하고 진입하면 미탐색 구간의 더 강한 후보를
-놓치므로, **후보 선택 범위의 전역 수렴이 먼저다**.
+Use R_edit only when the brief names a source interval or event, such as a scene
+at 3:16. Open-ended discovery must compare candidates across the full selection
+scope; converge globally before choosing a highlight.
 
-**커버리지 의무 — 겹침은 커버리지가 아니다.** 승격 게이트
-(`validate_terminal_grounding`)가 **컷 span 전체를
-terminal(verified/corrected)+support 체크포인트들의 합집합으로 덮으라고
-기계로 요구한다**(2026-07-26까지는 겹침만 봤고, 99–100s 체크포인트가
-0–100s 컷을 승격시킬 수 있었다). 덮이지 않은 부분은 먼저 검증하거나
-컷 경계를 좁힌다.
+**Overlap is not coverage.** `validate_terminal_grounding` requires the entire
+cut span to be covered by the union of supported terminal
+(`verified`/`corrected`) checkpoints. Verify uncovered regions or narrow the cut.
 
-허용되는 예외는 **컷 경계 여백** 하나다: 컷 경계는 단어 경계로 정밀
-스냅되지만 체크포인트 span 경계는 사람이 대략 잡으므로, head·tail
-각각 `min(2.0s, 컷 길이×10%)`까지의 미커버는 통과한다(실측: terminal
-컷 9개 중 8개가 완전 커버, 1개가 근거 시작보다 1.10s 앞선 의도적
-여백). **컷 몸통의 구멍은 여백으로 흡수되지 않는다.**
+Only boundary slack is allowed: up to `min(2.0s, cut duration × 10%)` at each
+head and tail because word-snapped cuts and human checkpoint spans differ.
+Slack never absorbs a hole in the cut body.
 
-두 조건이 갖춰지면: 전역 covered_ratio 미달이어도 쿨레쇼프 진입,
-전역 `converged`여도 대상 구간이 hypothesized면 그 구간 먼저 검증.
-전체 이해 질문(요약·분석)은 종전대로 전역 수렴이 기준이다.
+When these conditions hold, edit work may begin before global `covered_ratio`
+converges. A globally `converged` workspace still requires local verification
+when the target interval is `hypothesized`. Summaries and whole-video analysis
+still require global convergence.
 
-## 클립 후보 5차원 가중 채점표
+## Five-axis clip score
 
-각 차원 0~10 채점 후 가중합×10 (0–100점). 감정강도 차원은
-audioevents/highlights 신호를 근거로 인용한다(주관 채점 방지). 경계는
-세그먼트 시작 직전/종료 직후로 스냅.
+Score each axis 0–10, then multiply the weighted sum by 10. Ground emotional
+intensity in audioevents/highlights. Snap boundaries immediately before the
+first segment and after the last.
 
-| 차원 | 예능·방송 | 정보성 | 무엇을 보는가 |
+| Axis | Entertainment | Informational | Evidence |
 |---|---|---|---|
-| hook | 0.25 | 0.30 | 첫 2~3초에 시선 잡는 순간·대담한 발언·패턴 파괴 |
-| 독립완결성 | 0.20 | 0.25 | 앞뒤 맥락 없이도 완결되는가, 문장·액션이 잘리지 않는가 |
-| 감정강도 | 0.30 | 0.20 | 전사로 설명 안 되는 에너지 버스트(웃음·환호·비명), 리액션 크기 |
-| 가치밀도 | 0.10 | 0.15 | 초당 정보·행동 밀도(정보성) / 전개 속도(예능) |
-| 페이오프 | 0.15 | 0.10 | 펀치라인·반전·결말의 만족도 |
+| Hook | 0.25 | 0.30 | Attention in the first 2–3s; bold claim; pattern break |
+| Self-contained | 0.20 | 0.25 | Complete without prior context; no cut sentence or action |
+| Emotion | 0.30 | 0.20 | Laughter, cheers, screams, or visible reaction beyond transcript |
+| Value density | 0.10 | 0.15 | Information/action per second or pacing |
+| Payoff | 0.15 | 0.10 | Satisfaction of punchline, reversal, or ending |
 
-## 편집안 다안 제시 (Pareto — 단일 정답 금지)
+## Pareto edit alternatives
 
-같은 소재·브리프에도 좋은 편집안은 여럿이다. 채점 1위 단일안 대신
-**의도가 다른 2~3안**을 각 안의 트레이드오프·기각 대안과 함께 제시한다
-(인지편집 검증 2026-07-24 채택 — 기존 `alternatives_rejected` 관행의 확장):
+Offer 2–3 cuts with distinct intent, trade-offs, and rejected alternatives
+instead of one nominal winner.
 
-| 안 | 최적화 방향 | 대가 |
+| Option | Optimizes | Cost |
 |---|---|---|
-| 연속성컷 | 사건·행동·공간 연속성, 이해 우선 | 느린 리듬 |
-| 감정컷 | 리액션·침묵·감정 곡선 보존 | 일부 정보 생략 |
-| 긴장컷 | 정보 지연·빠른 리듬·후킹 | 시선 재탐색 비용 |
+| Continuity | Event, action, and spatial continuity | Slower pace |
+| Emotion | Reactions, silence, and emotional arc | Omits some information |
+| Tension | Delayed information, pace, hook | Higher visual reorientation cost |
 
-- 모든 안의 컷은 동일 게이트(단어 스냅→`boundary_eval`→비전 self-eval)를
-  통과해야 하며, 안별 차이는 **컷 선택·순서**지 경계 품질이 아니다.
-- 시퀀스 원장에는 채택안만 터미널 승격하고, 나머지 안은
-  `alternatives_rejected`에 기각 사유로 남긴다.
+- Every option must pass word snap → `boundary_eval` → visual self-review.
+  Options differ in cut selection and order, never boundary quality.
+- Promote only the chosen option in the sequence ledger. Record rejection
+  reasons for others in `alternatives_rejected`.
 
-## 컷 경계 결정적 지표 (boundary_eval — 쿨레쇼프 루프의 기계 게이트)
+## Deterministic boundary metrics
 
 `va boundary-eval <ws> --sequence seq-001 [--json]` —
-시퀀스 원장의 전 컷 경계 + **렌더 조인 병치**를 한 번에 게이트(권장):
-`loud_join`(RMS 급차 — 소스 에지가 각각 clean이어도 조립 결과는 급차일
-수 있다)·`jump_cut_risk`(SSIM>0.75 — 같은 구도의 시간 점프 후보).
-임계값은 콘텐츠·인코딩에 따라 오탐할 수 있으므로 advisory로 해석한다.
-조인 프레임은 캡처 캐시에 남아 비전 self-eval에 재사용. 개별 지점은
-`-t <경계> [-t ...]`(-t와 --sequence는 상호 배제).
+checks every sequence boundary and rendered join. Treat thresholds as advisory:
 
-쿨레쇼프 루프 = Pareto 다안→단어 스냅→본 지표→비전 self-eval→재스냅→
-터미널 승격. 두 게이트는 상호보완한다: 오디오는 단어 절단·급격한 레벨
-변화를, 비전은 화면 전환 침범과 구도 점프를 검토한다.
+- `word_interior`: cuts inside a word; re-snap immediately.
+- `tight_tail`: less than 0.12s after a word despite available silence; preserve
+  meaningful post-line silence.
+- `loud_step`: RMS changes by at least 12dB; inspect room tone or music.
+- `loud_join`: assembled audio jumps even when source edges look clean.
+- `jump_cut_risk`: SSIM > 0.75 suggests a time jump in similar framing.
 
-- `word_interior` — 단어 내부 절단(가장 심각, 즉시 재스냅).
-- `tight_tail` — 무발화 간극이 충분한데 직전 단어에 밀착(호흡 제거,
-  기본 0.12s) — 대사 직후의 감정적 침묵을 보존하라.
-- `loud_step` — 경계 전후 RMS 급차(기본 12dB) — 룸톤·음악 불연속 의심.
-  단독 게이트로 쓰기엔 분리력 부족, word_interior가 주 신호.
+Join frames remain in the capture cache for visual self-review. For individual
+points use `-t <boundary> [-t ...]`; `-t` and `--sequence` are exclusive.
 
-## 클립 추출 — 하드웨어 인코딩 선택
+The edit loop is: Pareto options → word snap → metrics → visual self-review →
+re-snap → terminal promotion. Audio detects word/level discontinuity; vision
+detects shot intrusion and composition jumps.
+
+## Clip encoding
 
 `va clip <ws> --start 1:23 --end 2:05 --accurate`
 
-- 방송 중이거나 4K 소스면 `--hw hevc`(또는 h264) — VideoToolbox 하드웨어
-  인코딩. 지원되는 macOS 하드웨어에서 CPU 부하를 줄일 수 있으므로
-  미리보기나 다른 실시간 작업과 병행할 때 고려한다.
-- 단 하드웨어 인코더는 동일 용량 기준 화질이 libx264/265보다 약간 열위 —
-  미리보기·검토용은 `--hw`, **최종 납품/아카이브용은 `--hw` 없이**.
+- For live work or 4K previews, `--hw hevc` (or h264) uses VideoToolbox on
+  supported macOS hardware and lowers CPU load.
+- Hardware encoding is slightly less efficient than libx264/265 at equal size.
+  Use `--hw` for preview/review; omit it for final delivery and archives.
 
-## 9:16 리프레이밍
+## 9:16 reframing
 
 `va reframe <ws> <clip> --roi x,y,w,h [--roi ...] --mode pan|split`
 
-- ROI는 클립의 full-res 캡처 1장을 열어 각 인물의 얼굴(입+턱 포함)
-  영역을 픽셀 좌표로 눈대중 지정한다(카메라 고정 전제라 1프레임이면
-  충분). 1인이면 ROI 1개=중앙 크롭, 2인 대화면 pan(모션 에너지 기반
-  화자 하드컷 팬) 또는 split(상하 분할 고정) 중 사용자에게 확인.
-- pan의 화자 타임라인은 stderr로 출력된다 — diarize의 S0/S1 라벨과
-  대조하면 "S0=좌측 인물" 시각 교차검증 근거가 된다.
+- Open one full-resolution frame and estimate each face ROI in pixels, including
+  mouth and chin. With a fixed camera, one frame is sufficient.
+- One subject: one centered ROI. Two speakers: ask the user to choose motion-led
+  `pan` or fixed stacked `split`.
+- `pan` prints a speaker timeline to stderr. Compare it with diarization labels
+  to support mappings such as S0 = left subject.
 
-## NLE 포맷별 세부
+## NLE formats
 
-| 포맷 | 대상·성격 |
+| Format | Contract |
 |---|---|
-| xml (xmeml v4) | 체크포인트를 시퀀스 마커로 전달. 마커 전용(컷 배치 없음); 대상 NLE에서 import를 확인 |
-| otio | OpenTimelineIO 러프컷+근거 메타데이터. 미디어는 외부 참조이며 대상 NLE/어댑터 지원을 별도 확인 |
-| fcpxml (1.11) | spine 러프컷+근거 마커. 대상 NLE 버전의 FCPXML import를 확인 |
-| srt | 자막 교환 경로. 전사 없으면 OCR 의사 전사 자동 폴백; 비공식 편집기 내부 JSON 조작 금지 |
-| edl (CMX3600) | 컷 리스트 폴백 — 하드캡 999 이벤트, 롱폼 대량 마커에 쓰지 말 것 |
-| md | 장면 로그(사람 표면) |
+| xml (xmeml v4) | Checkpoints as sequence markers only; verify import in the target NLE |
+| otio | Rough cut plus evidence metadata; external media references; verify adapter support |
+| fcpxml (1.11) | Spine rough cut plus evidence markers; verify target-version import |
+| srt | Subtitle exchange; falls back to OCR pseudo-transcript; never manipulate unofficial editor draft JSON |
+| edl (CMX3600) | Cut-list fallback; hard cap of 999 events; unsuitable for marker-heavy long form |
+| md | Human-facing scene log |
 
-- 러프컷 인계는 `--ids cp-004,cp-007` — **지정 순서가 곧 컷 순서**.
-- 편집안 원장 인계는 `--sequence seq-001`(edl·otio·fcpxml, xml은 마커
-  전용이라 미지원) — 트림 경계·컷 순서는 편집안이 정본.
+- With `--ids cp-004,cp-007`, argument order is cut order.
+- `--sequence seq-001` exports the sequence ledger to edl, otio, or fcpxml.
+  XML is marker-only. The ledger owns trim boundaries and cut order.

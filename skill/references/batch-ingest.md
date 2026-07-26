@@ -10,29 +10,31 @@ Use this contract for three or more videos when the current harness can run inde
 
 ```text
 [objective]
-영상 1편의 ingest+신호 추출만 수행하고 브리핑을 반환하라. 이해·판정은 하지 마라.
+Ingest one video, extract signals, and return its brief. Do not interpret it.
 
 [scope]
-대상: {video_path_or_url}
-워크스페이스: {absolute_workspace}
-  # URL이면 -o 필수(재개 경로 고정), 로컬 파일이면 CWD의 ./va-out/<stem> 기본값
-명령:
-  - {ws}/manifest.json이 이미 있으면 재-ingest 금지 — `va brief {ws}`만 실행
-  - 없으면 `va ingest "{video}" --model small --signals [-o {ws}]`
+source: {video_path_or_url}
+workspace: {absolute_workspace}
+  # URLs require -o for a stable resume path. Local files default to
+  # CWD/va-out/<stem>.
+commands:
+  - If {ws}/manifest.json exists, never re-ingest; run only `va brief {ws}`.
+  - Otherwise run `va ingest "{video}" --model small --signals [-o {ws}]`.
 
 [acceptance]
-- {ws}/manifest.json + transcript.json 존재 (명령 exit 0)
-- `va brief {ws}` 출력 전문을 반환에 포함
+- {ws}/manifest.json and transcript.json exist after an exit-0 command.
+- Return the complete `va brief {ws}` output.
 
 [boundaries]
-- 프레임 캡처·필름스트립·체크포인트 기록·클립 추출 금지 (메인 몫)
-- 배정된 워크스페이스 밖 접근 금지
-- glossary 갱신 금지 (세션 끝에 메인이 일괄)
+- No capture, filmstrip, checkpoint writes, or clip extraction.
+- Do not access paths outside the assigned workspace.
+- Do not update the glossary; the main agent batches that at session end.
 
-[return — JSON 한 개]
-{"workspace": "<절대경로>", "duration_s": <float>, "mode": "<brief의 mode 추천>",
- "chapters": <int>, "speech_ratio": <float>, "brief_text": "<va brief 출력 전문>",
- "error": null | "<실패 원인 — 추측 금지, 실제 stderr 근거>"}
+[return: one JSON object]
+{"workspace": "<absolute path>", "duration_s": <float>,
+ "mode": "<mode recommended by brief>", "chapters": <int>,
+ "speech_ratio": <float>, "brief_text": "<complete va brief output>",
+ "error": null | "<observed failure from stderr; no guesses>"}
 ```
 
 The main agent uses the returned `brief_text` values to prioritize videos, then resumes each analysis with `va brief <ws>`.

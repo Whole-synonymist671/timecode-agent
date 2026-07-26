@@ -1,38 +1,32 @@
-# 하네스별 도구·실행 매트릭스
+# Harness capability matrix
 
-SKILL.md 하네스 분기 절의 상세다. 하네스 이름보다 다음 두 능력을 먼저
-판정한다.
+Check capabilities, not harness names:
 
-1. 로컬 이미지 절대경로를 실제 모델 입력으로 전달하는 도구가 있는가?
-2. 현재 선택된 모델이 이미지 입력을 해석하는가?
+1. Can a tool pass an absolute local image path into the model?
+2. Can the selected model interpret image input?
 
-둘 중 하나라도 불명확하면 degraded로 시작한다. 설치 경로와 도구 이름은
-하네스의 현재 문서를 따르며, 다른 하네스의 검색 디렉터리를 자동 가정하지
-않는다.
+If either answer is unknown, start degraded. Follow the current harness docs for
+installation and tool names; never assume another harness's discovery path.
 
-| 환경 | 알려진 이미지 도구 예 | 판정 |
+| Environment | Known image tool | Gate |
 |---|---|---|
-| Claude Code | `Read` | 이미지가 모델 입력으로 전달되는지 첫 프레임에서 확인 |
-| Codex | `view_image` | `agents/openai.yaml`은 표시 메타데이터이며 도구 제공을 대신하지 않음 |
-| 다른 Agent Skills 하네스 | 하네스별 로컬 이미지 도구 | 공식 검색 경로에 스킬 전체를 설치하고 첫 판독으로 확인 |
-| 이미지 도구 또는 비전 모델 없음 | 없음 | **degraded 강제** — P0/P1 신호와 전사만 사용 |
+| Claude Code | `Read` | Prove the first frame reaches the model |
+| Codex | `view_image` | `agents/openai.yaml` is metadata, not a tool grant |
+| Other Agent Skills harness | Harness-local tool | Install the full skill in its documented path; prove the first frame |
+| No image tool or vision model | None | **Force degraded mode**; use transcript and P0/P1 signals only |
 
-## 공통 실행 축
+## Shared execution rules
 
-- **프레임·타일 열람**: 현재 하네스의 이미지 도구에 절대경로를 전달한다.
-  상대경로는 세션 CWD에 따라 흔들리므로 쓰지 않는다.
-- **긴 ingest·전사**: 분 단위로 걸리는 `va ingest`는 백그라운드로 돌리고
-  그동안 전사 없이 가능한 일(기존 워크스페이스 `va brief`, `va search`)을
-  진행한다. 완료 알림을 받은 뒤 절차 1로 들어간다.
-- **3편 이상 배치**: 서브에이전트 fan-out은 [배치 계약](batch-ingest.md)의
-  경계를 그대로 지킨다 — ingest·신호만 병렬이고, 가설·검증·판정은 메인
-  에이전트가 순차 수행한다(비전 판단 일관성).
-- **가설 원장이 곧 진행 상태**: `va status`/`va brief`가 남은 gap을 말하므로
-  별도 할 일 목록을 병행 관리하지 않는다 — 두 개를 두면 원장이 정본에서
-  밀려난다.
+- **Frames and tiles:** pass absolute paths. Relative paths depend on session CWD.
+- **Long ingest:** run minute-scale `va ingest` in the background; meanwhile use
+  existing workspaces via `va brief` or `va search`.
+- **Three or more videos:** follow the [batch contract](batch-ingest.md).
+  Parallelize ingest and deterministic signals only; keep judgment sequential.
+- **Progress state:** `va status` and `va brief` expose ledger gaps. Do not keep a
+  competing task list.
 
-## 모델·프록시 교체의 함정
+## Model or proxy changes
 
-하네스가 같아도 모델이나 API 프록시가 바뀌면 이미지 패스스루가 사라질 수
-있다. 도구 호출 성공과 모델의 시각 판독 성공은 별개다. 모델·엔드포인트를
-교체한 세션은 첫 프레임 판독이 실제로 성립한 뒤에만 풀 루프로 승격한다.
+A new model or API proxy can drop image passthrough even within the same
+harness. A successful tool call does not prove visual interpretation. Promote
+to the full loop only after the changed model or endpoint reads one frame.
