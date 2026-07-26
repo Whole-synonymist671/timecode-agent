@@ -19,7 +19,7 @@ classifiers = [
 ]
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "faster-whisper>=1.0.0",
+    "faster-whisper>=1.1.0",
     "mlx-whisper>=0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "numpy",
     "ocrmac>=1.0; sys_platform == 'darwin'",

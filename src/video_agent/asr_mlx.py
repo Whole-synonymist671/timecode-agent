@@ -8,7 +8,7 @@ from collections import Counter
 from pathlib import Path
 from typing import Mapping, TypeAlias
 
-from .ingest import Segment
+from .ingest_transcribe import Segment
 
 JsonValue: TypeAlias = (
     str

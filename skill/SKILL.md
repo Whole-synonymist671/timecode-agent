@@ -211,9 +211,9 @@ va status <ws> --json    # covered_ratio == 1.0 + gap 없음 + verified_ratio �
 `provisional`/미해결 범위를 답변에 명시한다.
 
 **편집 범위 수렴**: 구간·사건이 **특정된** 편집 요청만 — 컷 span
-전체가 terminal+support 체크포인트로 덮이면(겹침만으론 부족) 전역
-미수렴이어도 진입. 개방형 하이라이트 발굴은 후보 비교 범위의 전역
-수렴이 먼저다. 상세는 [산출 인계](references/output-handoff.md).
+전체가 terminal+support로 덮이면(게이트가 기계 강제) 전역 미수렴이어도
+진입. 개방형 하이라이트 발굴은 후보 비교 범위의 전역 수렴이
+먼저다. 상세는 [산출 인계](references/output-handoff.md).
 
 ### 5. 산출 — 이해·편집·가공
 

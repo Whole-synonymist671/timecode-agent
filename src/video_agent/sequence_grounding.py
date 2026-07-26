@@ -24,6 +24,76 @@ def _spans_overlap(left: list[float], right: list[float]) -> bool:
     return max(left[0], right[0]) < min(left[1], right[1])
 
 
+# 컷 경계 여백 — 컷 경계는 단어 경계로 정밀 스냅되지만 체크포인트 span
+# 경계는 사람이 대략 잡는다(실측 2026-07-26: terminal 컷 6개 중 5개는 완전
+# 커버, 1개가 근거 시작보다 1.10s 앞섬 — 원장 note에 "단어 경계 직전
+# 간극"으로 남은 의도적 여백). 그 대략성만 흡수하고 컷 몸통의 미커버는
+# 근거 없는 편집이라 막는다. 짧은 컷이 여백만으로 채워지지 않게 비율 상한도
+# 함께 둔다(5s 컷의 허용 여백은 0.5s).
+_EDGE_SLACK_MAX = 2.0
+_EDGE_SLACK_RATIO = 0.1
+_SPAN_EPSILON = 1e-9
+
+
+def uncovered_spans(
+    cut_span: tuple[float, float] | list[float],
+    checkpoint_spans: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """컷 span에서 체크포인트 span 합집합이 덮지 못한 구간들 (시간순)."""
+    remaining = [(float(cut_span[0]), float(cut_span[1]))]
+    for start, end in checkpoint_spans:
+        carved: list[tuple[float, float]] = []
+        for gap_start, gap_end in remaining:
+            if end <= gap_start or start >= gap_end:
+                carved.append((gap_start, gap_end))
+                continue
+            if start > gap_start:
+                carved.append((gap_start, min(start, gap_end)))
+            if end < gap_end:
+                carved.append((max(end, gap_start), gap_end))
+        remaining = carved
+    return sorted(
+        (start, end)
+        for start, end in remaining
+        if end - start > _SPAN_EPSILON
+    )
+
+
+def _require_cut_coverage(
+    where: str,
+    cut: Mapping[str, object],
+    checkpoint_spans: list[tuple[float, float]],
+) -> None:
+    """컷 몸통 전체가 terminal 근거로 덮이는지 — 겹침은 커버리지가 아니다.
+
+    겹침만 요구하면 99–100s 체크포인트 하나가 0–100s 컷을 승격시킨다.
+    """
+    span = cut["span"]
+    assert isinstance(span, list)
+    start, end = float(span[0]), float(span[1])
+    slack = min(_EDGE_SLACK_MAX, (end - start) * _EDGE_SLACK_RATIO)
+    for gap_start, gap_end in uncovered_spans((start, end), checkpoint_spans):
+        length = gap_end - gap_start
+        at_edge = (
+            gap_start - start <= _SPAN_EPSILON
+            or end - gap_end <= _SPAN_EPSILON
+        )
+        if at_edge and length <= slack + _SPAN_EPSILON:
+            continue
+        _require(
+            False,
+            f"{where}: 컷 {start:.2f}–{end:.2f}s 중 "
+            f"{gap_start:.2f}–{gap_end:.2f}s({length:.2f}s)에 terminal 근거가 "
+            "없습니다 — 겹침만으로는 승격할 수 없습니다. 그 구간을 덮는 "
+            "체크포인트를 검증해 추가하거나 컷 경계를 좁히십시오"
+            + (
+                f" (컷 경계 여백은 {slack:.2f}s까지 허용)"
+                if at_edge
+                else " (컷 몸통의 미커버는 여백으로 허용되지 않습니다)"
+            ),
+        )
+
+
 @contextmanager
 def checkpoint_grounding_snapshot(
     ws: Workspace,
@@ -153,6 +223,7 @@ def validate_terminal_grounding(
             "— canonical signal registry가 없어 signals-only 승격은 "
             "허용되지 않습니다",
         )
+        grounded_spans: list[tuple[float, float]] = []
         for checkpoint_id in checkpoint_ids:
             checkpoint = checkpoints_by_id[checkpoint_id]
             _require(
@@ -173,3 +244,8 @@ def validate_terminal_grounding(
                 f"{where}.span과 checkpoint {checkpoint_id}가 시간상 "
                 "겹치지 않습니다",
             )
+            assert isinstance(checkpoint_span, list)
+            grounded_spans.append(
+                (float(checkpoint_span[0]), float(checkpoint_span[1]))
+            )
+        _require_cut_coverage(where, cut, grounded_spans)
