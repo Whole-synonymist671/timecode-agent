@@ -22,6 +22,11 @@ def _package_version() -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    # 상태 값은 원장 스키마가 정본이다 — 파서가 목록을 재정의하면
+    # 검증과 표면이 갈라진다. import는 여기서(모듈 상단은 workspace를
+    # 조기 로드해 CLI 시작을 무겁게 한다).
+    from .checkpoint_schema import STATUSES as CHECKPOINT_STATUSES
+
     parser = argparse.ArgumentParser(
         prog="va",
         description="Transcript-first, lazily-verified video understanding toolkit",
@@ -205,6 +210,24 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("workspace", help=_WS_HELP)
     pa.add_argument("--json", help="checkpoint object as JSON string")
     pa.add_argument("--json-file", help="path to JSON file, '-' for stdin")
+    # 필드 플래그 — 스키마를 인터페이스에 드러낸다. 한글·따옴표가 섞인
+    # 본문은 여전히 --json-file - + heredoc이 안전하다(셸 이스케이프).
+    pa.add_argument("--id", dest="cp_id",
+                    help="체크포인트 id (예: cp-001). 같은 id = 새 리비전")
+    pa.add_argument("--span", nargs=2, metavar=("START", "END"),
+                    help="구간 — 초 또는 mm:ss (예: --span 0 42.5 / 1:23 2:05)")
+    pa.add_argument("--status", choices=CHECKPOINT_STATUSES,
+                    help="가설 상태 — 검증 전 hypothesized, 확인 verified, "
+                         "정정 corrected (terminal→hypothesized 되돌리기 불가)")
+    pa.add_argument("--hypothesis",
+                    help="그 구간에서 무엇이 벌어지는가 — 사람이 읽는 문장")
+    pa.add_argument("--confidence", type=float,
+                    help="0..1 확신도 (0.7 미만이면 시각 검증 대상)")
+    pa.add_argument("--segments",
+                    help="근거 전사 세그먼트 인덱스 (쉼표 구분: 0,1,2)")
+    pa.add_argument("--visual-evidence", action="append", metavar="PATH",
+                    help="<ws> 상대 프레임 경로 (반복 지정 가능)")
+    pa.add_argument("--note", help="정정 사유·특이사항 — 사람이 읽는 문장")
     pa.set_defaults(func=workspace_commands.cmd_checkpoint_add)
     pl = cp_sub.add_parser("list", help="기록된 체크포인트 목록")
     pl.add_argument("workspace", help=_WS_HELP)

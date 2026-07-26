@@ -3,6 +3,25 @@
 SKILL.md 루프 §2의 도구별 심층 사용법. 트리거 조건과 핵심 제약은 SKILL.md가
 정본이고, 이 문서는 사용 예·백엔드·해석 요령만 담는다.
 
+## 전사 신뢰 — mode 판정 전 확인 (§0-1 상세)
+
+전사량이 적은 게 조용한 영상인지 죽은 디코딩인지는 전사문만 봐서는
+구분되지 않는다. manifest가 판정 근거를 남긴다.
+
+- `transcript_coverage` — VAD가 본 발화 대비 옮겨 적힌 비율.
+  **발화 총량 60초 이상**에서 0.5 미만이면 붕괴 신호다(그 조건이 붕괴
+  게이트의 임계이고, 짧은 오디오는 한 문장이 비율을 좌우해 게이트가
+  면제한다 — 짧은 클립의 낮은 값은 죽은 전사의 증거가 아니다).
+  붕괴로 판단되면 잘린 전사를 "발화 희소 = 시각 주도"로 읽지 않는다
+  (43분 영상이 1092초에서 정지한 실측 사고). 낮은 커버리지로 남았으면
+  mode를 단정하지 말고 그 사실을 답변에 명시한다.
+- `transcript_repair` — 자동 복구가 돌았다는 표시. `tail-retranscribe`는
+  멈춘 지점부터 다시 받아쓴 것이므로 그 경계 뒤 전사를 표본 확인한다.
+- `hotwords_rejected` — glossary 용어가 반복 환각을 만들어 제외된 기록.
+  그 전사에는 도메인 용어 오청이 남아 있을 수 있다.
+- `asr_backend` — 어떤 백엔드가 만든 전사인지(MLX 폴백 여부 포함).
+  전사 품질을 비교·재현할 때의 좌표다.
+
 ## ingest·조망 예외
 
 - 전사가 비어 있으면 균등 4~6장 조망으로 시각 중심 가설을 시작한다.
@@ -41,13 +60,20 @@ SKILL.md 루프 §2의 도구별 심층 사용법. 트리거 조건과 핵심 �
 - 이미지 support 성립 = `frames/` 내부 실제 decode + 추적된 provenance +
   span 겹침 **셋 모두**. 절대·`..`·외부 symlink·부분 파일과 untracked
   레거시는 상세 표면에만 남고 support로 인정되지 않는다.
+- 이미지가 근거로 인정되지 않은 이유는 코드로 남는다:
+  `evidence_provenance_missing`(소인 기록 없음·untracked),
+  `evidence_role_not_verification`(조망 필름스트립은 후보 선별용이라
+  단독 근거가 아니다 — full-res 캡처로 확정),
+  `evidence_time_unavailable`(시점 정보 부재),
+  `evidence_outside_checkpoint`(체크포인트 span 밖 프레임).
 
 ## verification_audit 경고 코드 (§4 상세)
 
 terminal 체크포인트의 선언 근거가 없으면 `missing_support`, 과거 자유형
 근거면 `legacy_unstructured`, 프레임이 정리되어 현재 열 수 없으면
-`artifact_unavailable`. 이 경고는 기존 원장을 고치거나 readiness를 소급
-변경하지 않는 비차단 감사다.
+`artifact_unavailable`, `corrected`인데 무엇이 달랐는지 적은 노트가 없으면
+`correction_note_missing`(§3의 "틀리면 차이를 기록" 의무 위반). 이 경고는
+기존 원장을 고치거나 readiness를 소급 변경하지 않는 비차단 감사다.
 
 ## diarize — 화자분리
 

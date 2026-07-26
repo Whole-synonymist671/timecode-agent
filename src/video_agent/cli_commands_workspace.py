@@ -17,12 +17,31 @@ from .timestamps import parse_ts
 
 OCR_INPUT_REQUIRED_MESSAGE: Final = "provide -t timestamps or --every for a scan"
 CHECKPOINT_INPUT_REQUIRED_MESSAGE: Final = (
-    "provide --json or --json-file (use '-' for stdin)"
+    "provide field flags (--id/--span/--status/--hypothesis) "
+    "or --json/--json-file (use '-' for stdin)"
 )
 CHECKPOINT_SCHEMA_EXAMPLE: Final = (
     '예시: {"id": "kill-1", "span": [93.5, 96.0], '
     '"status": "hypothesized", "hypothesis": "첫 킬 장면", '
     '"evidence": "seg12 + burst"}'
+)
+CHECKPOINT_FLAG_EXAMPLE: Final = (
+    "예시: va checkpoint add <ws> --id cp-001 --span 0 42.5 "
+    '--status hypothesized --hypothesis "MC가 퀴즈 규칙을 설명한다"'
+)
+CHECKPOINT_INPUT_CONFLICT_MESSAGE: Final = (
+    "--json/--json-file과 필드 플래그는 함께 쓸 수 없습니다 — "
+    "한쪽만 고르십시오"
+)
+# 플래그 경로가 조립하는 필드 — argparse dest -> 원장 키.
+# (--id는 argparse의 기본 dest가 'id'라 예약어와 겹쳐 cp_id로 받는다)
+_CHECKPOINT_FLAG_FIELDS: Final = (
+    ("cp_id", "id"),
+    ("status", "status"),
+    ("hypothesis", "hypothesis"),
+    ("confidence", "confidence"),
+    ("note", "note"),
+    ("visual_evidence", "visual_evidence"),
 )
 
 
@@ -256,10 +275,53 @@ def cmd_ocr(args) -> int:
     return 0
 
 
+def _checkpoint_from_flags(args) -> dict | None:
+    """필드 플래그로 체크포인트를 조립한다 — 하나도 없으면 None.
+
+    스키마를 CLI 표면에 드러내는 경로다. 한글·따옴표가 긴 본문은 셸
+    이스케이프 사고가 잦아 --json-file - + heredoc이 여전히 안전하다.
+    """
+    obj: dict = {}
+    for dest, key in _CHECKPOINT_FLAG_FIELDS:
+        value = getattr(args, dest, None)
+        if value is not None:
+            obj[key] = value
+    span = getattr(args, "span", None)
+    if span:
+        try:
+            obj["span"] = [parse_ts(span[0]), parse_ts(span[1])]
+        except ValueError as e:
+            raise WorkspaceCommandUsageError(f"--span: {e}") from None
+    segments = getattr(args, "segments", None)
+    if segments:
+        try:
+            obj["segments"] = [
+                int(s) for s in segments.split(",") if s.strip()
+            ]
+        except ValueError:
+            raise WorkspaceCommandUsageError(
+                f"--segments는 쉼표로 구분한 정수 인덱스입니다: {segments!r}"
+            ) from None
+    return obj or None
+
+
 def cmd_checkpoint_add(args) -> int:
     from .checkpoints import append_checkpoint
 
     ws = _ws(args.workspace)
+    from_flags = _checkpoint_from_flags(args)
+    if from_flags is not None:
+        # 전달 여부는 None으로 판정한다 — 래퍼가 `--json "$EMPTY"`를 넘기면
+        # truthiness 검사는 옵션이 없다고 보고 상호배타 계약이 조용히 깨진다.
+        if args.json is not None or args.json_file is not None:
+            raise WorkspaceCommandUsageError(CHECKPOINT_INPUT_CONFLICT_MESSAGE)
+        try:
+            added = append_checkpoint(ws, from_flags)
+        except ValueError as e:
+            raise ValueError(
+                str(e) + "\n" + CHECKPOINT_FLAG_EXAMPLE) from None
+        print(f"checkpoint {added['id']} ({added['status']}) 기록됨")
+        return 0
     if args.json_file:
         raw = (
             sys.stdin.read()
