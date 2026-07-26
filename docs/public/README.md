@@ -75,9 +75,8 @@ before any grounded edit is exported.
   with search, sortable density tables, a hand-rolled canvas relation graph,
   and a sticky two-column workspace player; see
   [What it looks like](#what-it-looks-like).
-- **Named workflows** — the four everyday command chains carry names in the
-  Agent Skill (Dailies, Script Supervisor, the Eisenstein Cut, the Langlois
-  Archive); see [Usage](#usage).
+- **Named workflows** — the four everyday command chains carry plain names
+  in the Agent Skill (Import, Search, Cut, Archive); see [Usage](#usage).
 - **Experimental Windows support** — the workspace lock has an `msvcrt`
   fallback and CI runs a Windows smoke job; see
   [Requirements](#requirements).
@@ -123,11 +122,11 @@ flowchart TB
     V["video file or URL"] --> I["ingest"]
     I --> T["timestamped transcript"]
     I --> S["placement signals<br/>scenes · audio · OCR · faces"]
-    T --> A["coding-agent understanding loop"]
+    T --> A["understanding loop — Kubrick"]
     S --> A
     A --> C["checkpoints.jsonl<br/>claims · spans · support"]
     C --> P["indexes · static view · wiki · answers"]
-    C --> E["editing loop<br/>read-only understanding snapshot"]
+    C --> E["editing loop — Kuleshov<br/>read-only understanding snapshot"]
     E --> D["sequences.jsonl<br/>selection · order · trim"]
     D --> O["clips · EDL · FCPXML · OTIO · SRT"]
     D -. "never rewrites facts" .-> C
@@ -147,6 +146,71 @@ claims with resolvable time spans and evidence references.
 Understanding and editing are separate write domains. Editing reads a pinned
 understanding snapshot and records its own decisions. If a fact changes, the
 checkpoint is corrected upstream and the affected edit is re-derived.
+
+### The two loops: the Kubrick engine and the Kuleshov loop
+
+The two procedures above carry director names in the Agent Skill, so a
+request lands in the right loop with the right write permissions. The names
+describe procedures, not installed modules.
+
+| | **Kubrick** — the understanding engine | **Kuleshov loop** — the editing loop |
+|---|---|---|
+| Question | what is in this video, and how sure am I? | does this cut hold, and can it be defended? |
+| Writes to | `checkpoints.jsonl` — the fact ledger | `sequences.jsonl` — the edit-decision ledger |
+| Round trip | hypothesize from the transcript → pick verification points → capture → verify or correct → converge | draft cut alternatives → evaluate every cut boundary → re-snap → promote a terminal sequence |
+| Never does | export a cut | rewrite a fact |
+
+**Using Kubrick** — this is what the Agent Skill runs when you ask
+"analyze this video"; every step also works by hand:
+
+```bash
+va ingest lecture.mp4 --signals   # transcript + placement signals
+va brief va-out/lecture           # entry point: what is known so far
+va filmstrip va-out/lecture --auto   # low-res overview of uncertain stretches
+va capture va-out/lecture -t 95 --reason "speaker change"
+# capture prints the evidence path — a nonempty --reason is slugged into it
+va checkpoint add va-out/lecture --json-file - <<'JSON'
+{"id":"cp-001","span":[83,125],"status":"verified",
+ "hypothesis":"Q&A opens; a second speaker joins",
+ "confidence":0.9,
+ "visual_evidence":["frames/t000095000-speaker-change.jpg"]}
+JSON
+va status va-out/lecture          # coverage and readiness (advisory)
+```
+
+The loop converges when decision-critical claims have current support and
+another observation is unlikely to change the answer — not when a fixed
+frame budget is spent.
+
+**Using the Kuleshov loop** — what runs when you ask for a defensible cut;
+the [Cut workflow](#named-workflows) is its everyday entry:
+
+```bash
+va highlights va-out/lecture --json          # placement candidates
+va sequence add va-out/lecture --json-file - <<'JSON'
+{"id":"seq-001","intent":"lecture highlight",
+ "cuts":[{"span":[83.0,125.0],"order":1,"role":"hook",
+          "checkpoint_ids":["cp-001"]}],
+ "status":"assembled"}
+JSON
+va boundary-eval va-out/lecture --sequence seq-001   # score cut edges and joins
+# inspect and re-snap, then promote the same id to boundary_verified —
+# exporting an "assembled" sequence would leave the receipt's
+# checkpoint-revision map empty
+va sequence add va-out/lecture --json-file - <<'JSON'
+{"id":"seq-001","intent":"lecture highlight",
+ "cuts":[{"span":[83.0,125.0],"order":1,"role":"hook",
+          "checkpoint_ids":["cp-001"]}],
+ "status":"boundary_verified"}
+JSON
+va clip va-out/lecture --start 83 --end 125 --accurate
+va export va-out/lecture --format otio --sequence seq-001 -o cut.otio --receipt
+```
+
+The boundary between the loops is one-directional: the Kuleshov loop reads
+the fact ledger and never writes it. A cut that rests on a wrong fact is not
+patched in the sequence — the checkpoint is corrected in Kubrick and the
+edit is re-derived.
 
 <details>
 <summary><b>Current scope</b></summary>
@@ -563,17 +627,20 @@ Open the corpus browser any time with `va view` (writes `va-out/view.html`).
 
 ### Named workflows
 
-The Agent Skill names the four everyday command chains after film-studio
-roles, so a request can be routed without memorizing flag combinations:
+The Agent Skill names the four everyday command chains so a request can be
+routed without memorizing flag combinations. Import and Search feed the
+[Kubrick engine](#the-two-loops-the-kubrick-engine-and-the-kuleshov-loop);
+the Cut workflow is the everyday entry into the Kuleshov loop; the Archive
+projects what both loops recorded:
 
 | Workflow | What it does | Command chain |
 |---|---|---|
-| **Dailies** (데일리스) | first development of new footage | `va ingest --signals` → `va brief` |
-| **Script Supervisor** (스크립터) | recall over an existing corpus — no re-ingest | `va search` → `va brief <workspace>` |
-| **Eisenstein Cut** (에이젠슈테인 컷) | evidence-gated highlight / shorts assembly | `va highlights` → `va sequence add` → `va boundary-eval` → `va clip` / `va reframe` → `va export` |
-| **Langlois Archive** (랑글루아 서고) | knowledge projection over the corpus | `va index` → `va wiki` → `va view` → `va bridge` |
+| **Import** (가져오기) | first pass over new footage: transcript, signals, first brief | `va ingest --signals` → `va brief` |
+| **Search** (검색) | recall over an existing corpus — no re-ingest | `va search` → `va brief <workspace>` |
+| **Cut** (컷) | evidence-gated highlight / shorts assembly | `va highlights` → `va sequence add` → `va boundary-eval` → `va clip` / `va reframe` → `va export` |
+| **Archive** (아카이브) | knowledge projection over the corpus | `va index` → `va wiki` → `va view` → `va bridge` |
 
-Saying "run the dailies on this file" or "Eisenstein cut, 9:16" to a harness
+Saying "import and analyze this file" or "cut workflow, 9:16" to a harness
 with the skill installed resolves to these chains.
 
 ## Agent Skill

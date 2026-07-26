@@ -74,9 +74,8 @@ va status va-out/show
 - **코퍼스 브라우저 재설계** — `va view`가 검색·정렬 밀집 테이블·수제
   캔버스 관계 그래프·고정 2컬럼 워크스페이스 플레이어를 갖춘 다크 우선
   라이브러리를 만든다; [화면 미리보기](#화면-미리보기) 참고.
-- **명명 워크플로우** — 자주 쓰는 4개 명령 체인에 Agent Skill이 이름을
-  붙였다(데일리스·스크립터·에이젠슈테인 컷·랑글루아 서고);
-  [사용법](#사용법) 참고.
+- **명명 워크플로우** — 자주 쓰는 4개 명령 체인에 Agent Skill이 쉬운
+  이름을 붙였다(가져오기·검색·컷·아카이브); [사용법](#사용법) 참고.
 - **Windows 실험 지원** — 워크스페이스 락에 `msvcrt` 폴백이 들어가고
   CI가 Windows 스모크 잡을 돌린다; [요구 사항](#요구-사항) 참고.
 
@@ -121,11 +120,11 @@ flowchart TB
     V["video file or URL"] --> I["ingest"]
     I --> T["timestamped transcript"]
     I --> S["placement signals<br/>scenes · audio · OCR · faces"]
-    T --> A["coding-agent understanding loop"]
+    T --> A["understanding loop — Kubrick"]
     S --> A
     A --> C["checkpoints.jsonl<br/>claims · spans · support"]
     C --> P["indexes · static view · wiki · answers"]
-    C --> E["editing loop<br/>read-only understanding snapshot"]
+    C --> E["editing loop — Kuleshov<br/>read-only understanding snapshot"]
     E --> D["sequences.jsonl<br/>selection · order · trim"]
     D --> O["clips · EDL · FCPXML · OTIO · SRT"]
     D -. "never rewrites facts" .-> C
@@ -144,6 +143,69 @@ ingest는 업로더가 이미 만든 전사를 재사용한다: 수동 자막 �
 이해와 편집은 별개의 쓰기 도메인이다. 편집은 고정된(pinned) 이해
 스냅샷을 읽고 자기 결정을 따로 기록한다. 사실이 바뀌면 상류의
 체크포인트를 정정한 뒤 영향을 받은 편집을 다시 파생시킨다.
+
+### 두 루프: 큐브릭 엔진과 쿨레쇼프 루프
+
+위 두 절차는 Agent Skill에서 감독의 이름을 갖는다 — 요청이 올바른
+루프에, 올바른 쓰기 권한으로 착지하게 하기 위해서다. 이름은 절차를
+가리키며 설치되는 모듈이 아니다.
+
+| | **큐브릭(Kubrick)** — 이해 엔진 | **쿨레쇼프 루프(Kuleshov loop)** — 편집 루프 |
+|---|---|---|
+| 답하는 질문 | 이 영상에 무엇이 있고, 나는 얼마나 확신하는가? | 이 컷은 성립하는가, 방어할 수 있는가? |
+| 쓰는 곳 | `checkpoints.jsonl` — 사실 원장 | `sequences.jsonl` — 편집 결정 원장 |
+| 한 바퀴 | 전사로 가설 → 검증 지점 선정 → 캡처 → 확인 또는 정정 → 수렴 | 컷 다안 작성 → 모든 컷 경계 평가 → 재스냅 → terminal 시퀀스 승격 |
+| 절대 하지 않는 것 | 컷 내보내기 | 사실 고쳐 쓰기 |
+
+**큐브릭 사용법** — "이 영상 분석해줘"라고 하면 Agent Skill이 실행하는
+것이 바로 이 루프다. 모든 단계는 손으로도 실행된다:
+
+```bash
+va ingest lecture.mp4 --signals   # 전사 + placement 신호
+va brief va-out/lecture           # 진입점: 지금까지 알려진 것
+va filmstrip va-out/lecture --auto   # 불확실 구간의 저해상 조망
+va capture va-out/lecture -t 95 --reason "화자 교체"
+# capture가 출력하는 근거 경로를 그대로 쓴다 — --reason이 파일명에 붙는다
+va checkpoint add va-out/lecture --json-file - <<'JSON'
+{"id":"cp-001","span":[83,125],"status":"verified",
+ "hypothesis":"질의응답 시작; 두 번째 화자 합류",
+ "confidence":0.9,
+ "visual_evidence":["frames/t000095000-화자-교체.jpg"]}
+JSON
+va status va-out/lecture          # 커버리지·readiness(참고 신호)
+```
+
+루프는 판단에 중요한 주장들이 현재 유효한 근거를 갖고, 추가 관측이
+결론을 바꿀 가능성이 낮을 때 수렴한다 — 정해진 프레임 예산을 다 썼을
+때가 아니라.
+
+**쿨레쇼프 루프 사용법** — 방어 가능한 컷을 요청하면 실행되는 것;
+[컷 워크플로우](#명명-워크플로우)가 일상 진입점이다:
+
+```bash
+va highlights va-out/lecture --json          # placement 후보
+va sequence add va-out/lecture --json-file - <<'JSON'
+{"id":"seq-001","intent":"강연 하이라이트",
+ "cuts":[{"span":[83.0,125.0],"order":1,"role":"hook",
+          "checkpoint_ids":["cp-001"]}],
+ "status":"assembled"}
+JSON
+va boundary-eval va-out/lecture --sequence seq-001   # 컷 경계·조인 채점
+# 확인·재스냅 후 같은 id를 boundary_verified로 승격한다 —
+# "assembled" 상태로 내보내면 receipt의 체크포인트 리비전 맵이 빈다
+va sequence add va-out/lecture --json-file - <<'JSON'
+{"id":"seq-001","intent":"강연 하이라이트",
+ "cuts":[{"span":[83.0,125.0],"order":1,"role":"hook",
+          "checkpoint_ids":["cp-001"]}],
+ "status":"boundary_verified"}
+JSON
+va clip va-out/lecture --start 83 --end 125 --accurate
+va export va-out/lecture --format otio --sequence seq-001 -o cut.otio --receipt
+```
+
+두 루프의 경계는 단방향이다: 쿨레쇼프 루프는 사실 원장을 읽기만 하고
+절대 쓰지 않는다. 틀린 사실 위에 선 컷은 시퀀스에서 땜질하지 않는다 —
+큐브릭에서 체크포인트를 정정하고 편집을 다시 파생시킨다.
 
 <details>
 <summary><b>현재 범위</b></summary>
@@ -552,17 +614,20 @@ va ingest "https://instagram.com/reel/..." --cookies-from-browser chrome -o va-o
 
 ### 명명 워크플로우
 
-Agent Skill은 자주 쓰는 4개 명령 체인에 촬영소 직무의 이름을 붙여,
-플래그 조합을 외우지 않고도 요청을 라우팅할 수 있게 한다:
+Agent Skill은 자주 쓰는 4개 명령 체인에 쉬운 이름을 붙여, 플래그
+조합을 외우지 않고도 요청을 라우팅할 수 있게 한다. 가져오기와 검색은
+[큐브릭 엔진](#두-루프-큐브릭-엔진과-쿨레쇼프-루프)에 공급하고, 컷
+워크플로우는 쿨레쇼프 루프의 일상 진입점이며, 아카이브는 두 루프가
+기록한 것을 투영한다:
 
 | 워크플로우 | 하는 일 | 명령 체인 |
 |---|---|---|
-| **데일리스** (Dailies) | 새 푸티지의 1차 현상 | `va ingest --signals` → `va brief` |
-| **스크립터** (Script Supervisor) | 기존 코퍼스 회상 — 재-ingest 없음 | `va search` → `va brief <워크스페이스>` |
-| **에이젠슈테인 컷** (Eisenstein Cut) | 근거 게이트를 거친 하이라이트/쇼츠 조립 | `va highlights` → `va sequence add` → `va boundary-eval` → `va clip` / `va reframe` → `va export` |
-| **랑글루아 서고** (Langlois Archive) | 코퍼스 위의 지식 투영 | `va index` → `va wiki` → `va view` → `va bridge` |
+| **가져오기** (Import) | 새 푸티지의 1차 처리: 전사·신호·첫 브리핑 | `va ingest --signals` → `va brief` |
+| **검색** (Search) | 기존 코퍼스 회상 — 재-ingest 없음 | `va search` → `va brief <워크스페이스>` |
+| **컷** (Cut) | 근거 게이트를 거친 하이라이트/쇼츠 조립 | `va highlights` → `va sequence add` → `va boundary-eval` → `va clip` / `va reframe` → `va export` |
+| **아카이브** (Archive) | 코퍼스 위의 지식 투영 | `va index` → `va wiki` → `va view` → `va bridge` |
 
-스킬이 설치된 하네스에 "이 파일 데일리스 돌려줘"나 "에이젠슈테인 컷,
+스킬이 설치된 하네스에 "이 파일 가져와서 분석해줘"나 "컷 워크플로우,
 9:16"이라고 말하면 이 체인으로 해석된다.
 
 ## Agent Skill
