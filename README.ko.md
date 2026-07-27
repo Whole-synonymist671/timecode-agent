@@ -85,7 +85,7 @@ va status va-out/show
   CI가 Windows 스모크 잡을 돌린다; [요구 사항](#요구-사항) 참고.
 
 전부 `main`에 반영됐다. 현재 릴리스는
-[v0.2.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.2.0)이고,
+[v0.3.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.3.0)이고,
 [v0.1.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.1.0)이
 첫 릴리스였다.
 
@@ -298,6 +298,24 @@ va-out/
 └── another-video/
 ```
 
+ingest는 manifest에 source·transcript·timing revision ID를 발행한다. 신규
+체크포인트·이미지 provenance 이벤트·시퀀스·NLE receipt는 그 revision을
+함께 기록한다. `va ingest`는 이미 발행된 워크스페이스나 manifest 없이
+durable evidence가 남은 디렉터리를 덮어쓰지 않는다. 이어서 작업할 때는
+`va brief`, 새 source 또는 새 전사 세대는 새로운 `-o` 경로를 사용한다.
+첫 ingest가 revision 발행 전에 실패하면 manifest는 `building`으로 남고,
+같은 source와 `-o` 경로로 안전하게 재시도할 수 있다.
+초 단위는 CLI 입력·표시로 유지하지만 신규 원장 레코드는 half-open stream
+PTS/time-base span도 함께 저장한다. revision-bound NLE 인계 전에는 마지막
+프레임 경계와 모든 프레임 duration을 포함한 전체 decoded video timeline이
+하나의 유리수 cadence임을 증명해야 한다.
+`avg_frame_rate == r_frame_rate`는 힌트일 뿐이며, VFR·미확인·불규칙
+timing은 decoded-frame snap/export가 생길 때까지 차단된다.
+revision 도입 전 워크스페이스는 계속 읽을 수 있지만 새 체크포인트·이미지
+provenance·시퀀스를 쓸 수는 없다. 증거를 추가하려면 새 ingest
+워크스페이스를 만든다. 현재 Python API가 직접 만든 새 draft는 첫 증거
+쓰기 때 source·transcript·timing revision을 발행한다.
+
 `va search "<검색어>"`는 워크스페이스 전사·체크포인트·OCR을 아우르는
 온디맨드 FTS5 뷰를 만든다. `va view`는 자체 완결형 정적 코퍼스
 브라우저를 쓴다. `va wiki`는 엔티티·관계·인용·장면 노트를 Markdown으로
@@ -323,6 +341,7 @@ va-out/
 | Placement와 검사 | `brief` `capture` `keyframes` `audioevents` `diarize` `faces` `ocr` `filmstrip` `highlights` `scenes` |
 | 이해 상태 | `checkpoint add/list` `status` |
 | 편집과 납품 | `sequence add/list` `boundary-eval` `clip` `export` `reframe` |
+| 런타임과 설정 | `runtime` |
 
 같은 CLI를 `va`와 `tca` 두 이름으로 쓸 수 있다.
 
@@ -335,7 +354,9 @@ va-out/
 - `diarize`는 누가 언제 말했는지 화자 턴을 더한다. `--backend auto`는
   Hugging Face 토큰(환경변수 또는 `hf auth login` 캐시)이 있으면 게이트
   걸린 `pyannote` 모델을 선호하고, 없으면 게이트 없는 `sherpa` 백엔드를
-  쓴다.
+  쓴다. 체크포인트나 다른 전사 의존 증거를 기록하기 전에 실행하라.
+  diarize는 transcript revision을 전진시키며, 그런 증거가 생긴 뒤에는
+  거부된다.
 - `boundary-eval`은 기록된 시퀀스의 컷 지점과 조인(발화 절단·호흡·
   음량 단차)을 채점해, 리뷰 후가 아니라 내보내기 전에 편집을 다시
   스냅할 수 있게 한다.
@@ -352,7 +373,7 @@ argparse 또는 유효 런타임 기본값이며 문서상의 추측이 아니�
 |---|---|---|---|
 | `ingest` | `--max-height` | `1080` | URL 다운로드 해상도 상한 |
 | `ingest` | `--cookies-from-browser` | 없음 | `chrome`\|`safari`\|`firefox` — 로그인 벽이 있는 소스에 브라우저 쿠키를 `yt-dlp`로 전달; 자기 세션이 필요할 때만 |
-| `ingest` | `-o`, `--out` | `./va-out/<stem>`(로컬 파일) 또는 `./va-out/url-<md5-prefix>`(URL) | 워크스페이스 디렉터리 — URL은 재개 경로를 미리 알 수 있게 항상 지정 |
+| `ingest` | `-o`, `--out` | `./va-out/<stem>`(로컬 파일) 또는 `./va-out/url-<md5-prefix>`(URL) | 새 워크스페이스 디렉터리 — 기존 manifest나 고아 durable evidence가 있으면 fail-closed; URL은 재개 경로를 미리 알 수 있게 항상 지정 |
 | `ingest` | `--model` | `small` | whisper 크기(`tiny`\|`base`\|`small`\|`medium`\|`large-v3`), 또는 임의의 CTranslate2 모델 — 로컬 경로나 HF repo id |
 | `ingest` | `--asr-backend` | `auto` | ASR 실행 경로(`auto`\|`faster-whisper`\|`mlx`) — `auto`는 런타임 프로파일을 따른다: `balanced`/`quality`=faster-whisper, Apple Silicon `low-power`=MLX+VAD+품질 폴백 |
 | `ingest` | `--lang` | 자동 감지 | 예: `ko`, `en` |
@@ -627,8 +648,7 @@ va brief va-out/my-video
 va ingest lecture.mp4 --model small --lang ko --signals
 
 # 자막이 있지만 컷에 단어 수준 타이밍이 필요 — "신선한" 워크스페이스로
-# 전사하라(채워진 워크스페이스에 재-ingest하면 기록된 체크포인트가
-# 다른 전사에 붙은 채 남는다)
+# 전사하라(채워진 워크스페이스의 재-ingest는 변경 전에 거부된다)
 va ingest "https://youtu.be/..." --force-whisper -o va-out/my-video-whisper
 
 # 로그인 벽이 있는 소스(예: Instagram): --cookies-from-browser chrome
@@ -735,11 +755,13 @@ readiness 상태, 그리고 하드웨어 순위가 아니라 회귀를 잡기 �
 - 내려받고 분석할 권리가 있는 콘텐츠만 ingest하라.
   `--cookies-from-browser` 옵션은 자신의 인가된 세션을 위한 것이다 —
   자격 증명을 저장소에 절대 담지 말라.
-- 영상 하나에 워크스페이스 하나. 재개는 `va brief <워크스페이스>`로
-  하라 — 채워진 워크스페이스에 `va ingest`를 다시 실행하면 manifest와
-  전사가 교체되면서 기록된 체크포인트·시퀀스는 남아, 그 근거가 다른
-  전사에 붙어 버린다. 다른 전사가 필요하면 신선한 `-o` 경로를 쓰라.
-  공간 회수는 파일을 손으로 지우지 말고 `va gc`(기본 드라이런)로 하라.
+- source·transcript revision 하나에 워크스페이스 하나. 재개는
+  `va brief <워크스페이스>`로 하라 — ready 또는 revision 도입 전
+  워크스페이스에 `va ingest`를 다시 실행하면 manifest·전사를 바꾸기 전에
+  거부된다. 명시적인 미완료 `building` ingest만 같은 source와 `-o`
+  경로로 재시도할 수 있다. source나 전사가 달라지면 신선한 `-o` 경로를
+  쓰라. 공간 회수는 파일을 손으로 지우지 말고 `va gc`(기본 드라이런)로
+  하라.
 
 ## 문서
 

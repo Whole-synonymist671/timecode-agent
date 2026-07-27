@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import TypedDict
+from urllib.parse import unquote
 
-from .wiki_state import NOTES_END, NOTES_PLACEHOLDER, NOTES_START
+from .wiki_state import (
+    ENTITY_RECALL_FILENAME,
+    NOTES_END,
+    NOTES_PLACEHOLDER,
+    NOTES_START,
+)
 
 
 class WikiLayerAudit(TypedDict):
@@ -28,6 +35,9 @@ class WikiIntegrityAudit(TypedDict):
 
     broken_links: list[str]
     orphan_entities: list[str]
+    # 직전 재생성에서 같은 파일명이 다른 대상으로 넘어간 엔티티 —
+    # 외부 백링크와 보존 노트의 귀속이 조용히 어긋나는 회귀다(spec §5.3).
+    reassigned_entities: list[str]
 
 
 class ImprovementCandidates(TypedDict):
@@ -110,6 +120,15 @@ def _md_targets(path: Path, text: str) -> list[tuple[str, Path | None]]:
     공백 목적지는 Obsidian이 해석하지 못하는데 이 검사기는 관대하게
     통과시켜 왔다(검사기-소비자 격차, 46건 실측) — None으로 돌려 깨진
     링크로 계상한다.
+
+    퍼센트 이스케이프는 파일명으로 해석하기 전에 반드시 디코드한다.
+    생성기 ``corpus_projection.md_target``은 ``%``·``<``·``>``·``\\``와
+    제어문자를 퍼센트 인코딩하고(인젝션 방어), Obsidian·브라우저 같은
+    실제 소비자도 목적지를 디코드해 해석한다. 디코드가 없던 동안에는
+    제목에 ``%``가 든 워크스페이스 하나가 INDEX·scene log·이미지 페이지에
+    걸쳐 깨진 링크 24건으로 계상됐다(같은 클래스의 검사기-소비자 격차).
+    ``unquote``는 유효하지 않은 ``%`` 시퀀스를 그대로 두므로, 인코딩하지
+    않은 수기 링크도 종전대로 해석된다.
     """
     out: list[tuple[str, Path | None]] = []
     for raw in _link_destinations(text):
@@ -117,10 +136,13 @@ def _md_targets(path: Path, text: str) -> list[tuple[str, Path | None]]:
         wrapped = target.startswith("<") and target.endswith(">")
         if wrapped:
             target = target[1:-1]
-        target = target.split("#", 1)[0].strip()
+        # 원시 공백 판정은 디코드 전 표기로 한다 — `a%20b.md`는 감싸지 않아도
+        # CommonMark·Obsidian이 정상 해석하는 목적지이므로 공백 파손이 아니다.
+        encoded = target.split("#", 1)[0].strip()
+        target = unquote(encoded)
         if not target or "://" in target or not target.endswith(".md"):
             continue
-        if not wrapped and " " in target:
+        if not wrapped and " " in encoded:
             out.append((raw, None))
             continue
         out.append((raw, (path.parent / target).resolve()))
@@ -163,7 +185,26 @@ def audit_wiki_integrity(root: Path) -> WikiIntegrityAudit:
         for p in sorted(root.glob("wiki/entities/*.md"))
         if p.resolve() not in reachable
     ]
-    return {"broken_links": broken, "orphan_entities": orphans}
+    return {
+        "broken_links": broken,
+        "orphan_entities": orphans,
+        "reassigned_entities": _last_entity_reassignments(root),
+    }
+
+
+def _last_entity_reassignments(root: Path) -> list[str]:
+    """`va wiki`가 남긴 마지막 재생성의 슬러그 재배정 표본."""
+    path = root / "wiki" / ENTITY_RECALL_FILENAME
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(payload, dict):
+        return []
+    sample = payload.get("reassigned_sample")
+    if not isinstance(sample, list):
+        return []
+    return [str(item) for item in sample]
 
 
 def collect_improvements(

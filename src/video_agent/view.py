@@ -151,6 +151,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;
 .clamp2{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;
  overflow:hidden}
 .empty{padding:36px 16px;text-align:center;color:var(--muted);font-size:14px}
+.media-warn{margin:0 0 10px;padding:10px 12px;border-radius:8px;
+ border:1px solid var(--border-strong);background:var(--surface);
+ color:var(--text);font-size:13px;line-height:1.5}
 video{width:100%;max-height:52vh;background:#000;border-radius:10px;
  border:1px solid var(--border);display:block}
 .player-rail{position:sticky;top:0;z-index:5;background:var(--bg);
@@ -242,6 +245,16 @@ summary:hover{color:var(--text)}
 
 _SEEK_JS = """
 const v=document.querySelector('video');let stop=null;
+// 로컬 파일로 ingest한 워크스페이스는 원본을 file:// 절대 경로로 가리킨다.
+// 그 페이지를 로컬 서버로 열면 브라우저가 file:// 리소스를 막아 재생이
+// 조용히 검은 화면이 된다(2026-07-27 실측). 침묵 대신 말한다.
+if(v){const _src=v.getAttribute('src')||'';
+ if(_src.indexOf('file:')===0&&location.protocol!=='file:'){
+  const _b=document.createElement('p');_b.className='media-warn';
+  _b.textContent='원본이 이 워크스페이스 밖 로컬 경로에 있어 서버로 열면 '
+   +'재생되지 않습니다 — 이 페이지를 파일로 직접 열거나(file://), '
+   +'원본을 워크스페이스 안으로 옮긴 뒤 va view를 다시 실행하십시오.';
+  v.parentNode.insertBefore(_b,v);}}
 const spans=[...document.querySelectorAll('[data-span-start]')];
 const marks=[...document.querySelectorAll('.timeline button')];
 function seekTo(t){if(!v||!isFinite(t))return;
@@ -305,6 +318,11 @@ function apply(){
  if(cnt)cnt.textContent=n===rows.length?
   rows.length+'편 모두 표시':rows.length+'편 중 '+n+'편';
  if(emptyRow)emptyRow.hidden=n>0;
+ // 목록과 그래프가 같은 필터를 본다. 예전에는 "39편 중 3편"이라 적힌
+ // 화면에서 그래프만 39편을 계속 그렸다.
+ window.__wsFilter=(t||group)?
+  new Set(rows.filter(r=>!r.hidden).map(r=>'ws:'+r.dataset.rel)):null;
+ if(window.__graphRedraw)window.__graphRedraw();
  syncHash();}
 let deb=0;
 q.addEventListener('input',()=>{clearTimeout(deb);deb=setTimeout(apply,80);});
@@ -409,33 +427,61 @@ function initGraph(){
    const sp=Math.hypot(n.vx,n.vy);
    if(sp>24){n.vx*=24/sp;n.vy*=24/sp;}
    if(n!==drag){n.x+=n.vx;n.y+=n.vy;}}}
+ // 필터가 켜지면 적중 워크스페이스와 그 이웃 엔티티만 살아난다.
+ // 나머지는 지우지 않고 흐리게 남긴다 — 문맥이 사라지면 그래프가 아니다.
+ function inFilter(n){
+  const f=window.__wsFilter;
+  if(!f)return true;
+  if(n.type==='ws')return f.has(n.id);
+  const near=nbr.get(n);
+  if(!near)return false;
+  for(const m of near)if(m.type==='ws'&&f.has(m.id))return true;
+  return false;}
  function draw(){
   ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
   ctx.translate(W/2+ox,H/2+oy);ctx.scale(scale,scale);
   const hi=hover?nbr.get(hover)||new Set():null;
   for(const e of E){
-   const dim=hover&&e.a!==hover&&e.b!==hover;
+   const dim=(hover&&e.a!==hover&&e.b!==hover)
+    ||!(inFilter(e.a)&&inFilter(e.b));
    ctx.globalAlpha=dim?C.dim:.45;
    ctx.strokeStyle=C.edge;ctx.lineWidth=1/scale;
    ctx.beginPath();ctx.moveTo(e.a.x,e.a.y);ctx.lineTo(e.b.x,e.b.y);
    ctx.stroke();}
   for(const n of N){
-   const dim=hover&&n!==hover&&!(hi&&hi.has(n));
+   const dim=(hover&&n!==hover&&!(hi&&hi.has(n)))||!inFilter(n);
    ctx.globalAlpha=dim?C.dim:1;
    ctx.fillStyle=n.type==='ws'?C.ws:C.ent;
    ctx.beginPath();ctx.arc(n.x,n.y,n.r,0,7);ctx.fill();}
   ctx.font=(11/scale)+'px Pretendard,-apple-system,sans-serif';
   ctx.textAlign='center';
   ctx.lineWidth=3/scale;ctx.strokeStyle=C.halo;ctx.lineJoin='round';
-  for(const n of N){
+  // 라벨은 그린 순서대로 자리를 잡고, 이미 놓인 라벨과 겹치면 건너뛴다.
+  // 39편 실코퍼스에서 워크스페이스 라벨이 전부 그려져 서로 뭉갰다.
+  const placed=[];
+  const ordered=N.filter(n=>{
    const focus=n===hover||(hi&&hi.has(n));
-   const show=focus||(n.type==='ws'&&scale>=.7)||scale>1.5;
-   if(!show)continue;
-   ctx.globalAlpha=focus?1:Math.min(1,(scale-.55)*2);
+   return focus||(n.type==='ws'&&scale>=.7)||scale>1.5;})
+   .sort((a,b)=>{
+    const fa=(a===hover||(hi&&hi.has(a)))?0:(inFilter(a)?1:2);
+    const fb=(b===hover||(hi&&hi.has(b)))?0:(inFilter(b)?1:2);
+    return fa-fb||(deg.get(b.id)||0)-(deg.get(a.id)||0);});
+  for(const n of ordered){
+   const focus=n===hover||(hi&&hi.has(n));
    const y=n.y-n.r-5/scale;
+   const w=ctx.measureText(n.label).width,h=13/scale;
+   const box=[n.x-w/2,y-h,n.x+w/2,y];
+   let hit=false;
+   for(const p of placed){
+    if(box[0]<p[2]&&box[2]>p[0]&&box[1]<p[3]&&box[3]>p[1]){hit=true;break;}}
+   if(hit&&!focus)continue;
+   placed.push(box);
+   ctx.globalAlpha=focus?1:
+    (inFilter(n)?Math.min(1,(scale-.55)*2):C.dim);
    ctx.strokeText(n.label,n.x,y);ctx.fillStyle=C.text;
    ctx.fillText(n.label,n.x,y);}
   ctx.globalAlpha=1;}
+ window.__graphRedraw=()=>{if(graphStarted)draw();};
  function fit(){
   let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
   for(const n of N){x0=Math.min(x0,n.x);y0=Math.min(y0,n.y);
@@ -900,6 +946,9 @@ def build_view(
             f' data-mode="{html.escape(str(r["mode_head"]), quote=True)}"'
             f' data-cps="{r["cps"]}"'
             f' data-group="{html.escape(group, quote=True)}"'
+            # 그래프 노드(`ws:<rel>`)와 목록 행을 잇는 키 — 이게 없으면
+            # 검색으로 목록만 좁혀지고 그래프는 전편을 계속 그린다.
+            f' data-rel="{html.escape(rel, quote=True)}"'
             f' data-labels="{html.escape(" ".join(r["labels"]), quote=True)}">'
             f'<td>{crumb}<a href="{quote(rel)}/view.html">{title}</a></td>'
             f'<td class="num">{fmt_ts_compact(r["duration"])}</td>'

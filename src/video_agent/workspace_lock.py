@@ -69,6 +69,7 @@ def _would_self_deadlock(
     logical_target: _LogicalTarget,
     *,
     exclusive: bool,
+    allow_reentrant_exclusive: bool,
 ) -> bool:
     """Reject unsafe upgrades while permitting covered cross-ledger nesting."""
     if not exclusive:
@@ -76,7 +77,15 @@ def _would_self_deadlock(
     same_target = any(
         held.logical_target == logical_target for held in stack
     )
-    return same_target or not any(held.exclusive for held in stack)
+    if same_target:
+        return not (
+            allow_reentrant_exclusive
+            and any(
+                held.logical_target == logical_target and held.exclusive
+                for held in stack
+            )
+        )
+    return not any(held.exclusive for held in stack)
 
 
 def _open_lock_fd(root: Path, lock_path: Path) -> tuple[int, bool]:
@@ -136,6 +145,7 @@ def stable_workspace_lock(
     *,
     exclusive: bool,
     blocking: bool = True,
+    allow_reentrant_exclusive: bool = False,
 ) -> Iterator[None]:
     """Lock a persistent sidecar or the workspace directory for legacy data."""
     lock_fd, using_legacy_fallback = _open_lock_fd(root, lock_path)
@@ -153,6 +163,7 @@ def stable_workspace_lock(
             stack,
             logical_target,
             exclusive=exclusive,
+            allow_reentrant_exclusive=allow_reentrant_exclusive,
         ):
             raise BlockingIOError(
                 errno.EWOULDBLOCK,

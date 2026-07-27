@@ -23,6 +23,8 @@ from .image_naming import (
     strip_cell_midpoints,
 )
 from .image_types import ImageEvent, ImageMetadata, ImageRecord
+from .revision import REVISION_FIELDS
+from .temporal import canonicalize_span
 from .workspace import Workspace
 
 PROVENANCE_SCHEMA: Final = 1
@@ -32,6 +34,7 @@ _KNOWN_INPUT_KEYS: Final = {
     "cause_type", "edge_id", "reason", "source", "t", "span",
     "timestamps", "crop", "requested_t", "window", "role", "scores",
     "cells", "cols", "render_version", "metadata",
+    "temporal_span", *REVISION_FIELDS,
 }
 
 
@@ -168,6 +171,14 @@ def normalize_event(
     raw_kind = raw.get("kind")
     kind = raw_kind if isinstance(raw_kind, str) else infer_image_kind(image_path)
     values = _parse_metadata(raw, image_path)
+    canonical_span = None
+    if "span" in values:
+        projected, canonical_span = canonicalize_span(
+            ws,
+            values["span"],
+            raw.get("temporal_span"),
+        )
+        values["span"] = projected
     extra = {key: value for key, value in raw.items()
              if key not in _KNOWN_INPUT_KEYS}
     if extra:
@@ -241,6 +252,12 @@ def normalize_event(
         event["render_version"] = values["render_version"]
     if "metadata" in values:
         event["metadata"] = values["metadata"]
+    if canonical_span is not None:
+        event["temporal_span"] = canonical_span
+    for field in REVISION_FIELDS:
+        revision = raw.get(field)
+        if isinstance(revision, str):
+            event[field] = revision
     return event
 
 

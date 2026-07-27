@@ -2,8 +2,9 @@
 
 전사(ingest)·화자 분리(diarize)·의미 오디오 이벤트(audioevents)가 각자
 임시 디렉터리에 동일한 변환을 반복했다(전수점검 2026-07-26 백로그).
-워크스페이스 `cache/`에 한 번 추출해 두고 소스 영상 지문(크기·mtime)이
-같으면 재사용한다.
+워크스페이스 `cache/`에 한 번 추출해 두고 소스 영상의 전체 stat 지문과
+봉인된 content hash가 같으면 재사용한다. 추출 전후 지문이 같을 때만
+임시 WAV를 캐시로 승격한다.
 
 - 디스크 비용은 대략 시간당 115MB — 재생성 가능한 파생물이므로
   `va gc --purge media`가 소스 영상과 같은 분류로 회수한다.
@@ -18,7 +19,12 @@ import tempfile
 from pathlib import Path
 
 from .fsio import write_text_atomic
+from .probe import source_stat_fingerprint
 from .proc import run
+from .revision import (
+    RevisionBindingError,
+    current_revision_bindings,
+)
 from .workspace import Workspace
 
 CACHE_DIRNAME = "cache"
@@ -26,9 +32,29 @@ _WAV_NAME = "audio-16k.wav"
 _META_NAME = "audio-16k.json"
 
 
-def _source_fingerprint(video: Path) -> dict:
-    stat = video.stat()
-    return {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+def _source_fingerprint(ws: Workspace) -> dict[str, int | str]:
+    fingerprint: dict[str, int | str] = {}
+    manifest = ws.manifest
+    source_hash = manifest.get("source_content_hash")
+    if isinstance(source_hash, str):
+        current_revision_bindings(ws)
+    else:
+        source_hash = manifest.get("ingest_source_content_hash")
+        if isinstance(source_hash, str):
+            from .revision import _stable_file_hash
+
+            actual_hash, actual_stat = _stable_file_hash(ws.video)
+            if (
+                actual_hash != source_hash
+                or manifest.get("source_stat") != actual_stat
+            ):
+                raise RevisionBindingError(
+                    "workspace source content seal mismatch"
+                )
+    fingerprint.update(source_stat_fingerprint(ws.video.stat()))
+    if isinstance(source_hash, str):
+        fingerprint["source_content_hash"] = source_hash
+    return fingerprint
 
 
 def existing_audio_wav(ws: Workspace) -> Path | None:
@@ -43,7 +69,7 @@ def existing_audio_wav(ws: Workspace) -> Path | None:
         if (
             wav.is_file()
             and json.loads(meta.read_text(encoding="utf-8"))
-            == _source_fingerprint(ws.video)
+            == _source_fingerprint(ws)
         ):
             return wav
     except (OSError, json.JSONDecodeError):
@@ -59,6 +85,7 @@ def cached_audio_wav(ws: Workspace) -> Path:
     cache_dir = ws.root / CACHE_DIRNAME
     cache_dir.mkdir(exist_ok=True)
     wav = cache_dir / _WAV_NAME
+    source_fingerprint = _source_fingerprint(ws)
     with tempfile.NamedTemporaryFile(
         prefix=f".{_WAV_NAME}.", suffix=".tmp",
         dir=cache_dir, delete=False,
@@ -75,11 +102,15 @@ def cached_audio_wav(ws: Workspace) -> Path:
                 f"ffmpeg audio extract failed ({result.returncode}): "
                 f"{result.stderr.strip()}"
             )
+        if _source_fingerprint(ws) != source_fingerprint:
+            raise RevisionBindingError(
+                "workspace source changed during audio extraction"
+            )
         temporary.replace(wav)
     finally:
         temporary.unlink(missing_ok=True)
     write_text_atomic(
         ws.root / CACHE_DIRNAME / _META_NAME,
-        json.dumps(_source_fingerprint(ws.video)),
+        json.dumps(source_fingerprint),
     )
     return wav

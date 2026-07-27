@@ -183,7 +183,7 @@ def _hotwords_lines(m) -> list[str]:
         # 스탬프 도입 이전 전사 — 현행 글로서리가 있을 때만 비교 불가를 알린다.
         return (
             ["hotwords: 전사 설정 미기록(레거시) — 현행 글로서리와 세대 "
-             "비교 불가, 재전사 시 스탬핑됨"]
+             "비교 불가, 새 -o 워크스페이스 재전사 시 스탬핑됨"]
             if current else []
         )
     applied = m.get("hotwords")
@@ -203,7 +203,7 @@ def _hotwords_lines(m) -> list[str]:
         baseline_shared = baseline[: -len(prior)].strip() or None
     if current != baseline_shared:
         lines.append("hotwords-드리프트: 글로서리가 전사 이후 갱신됨 — "
-                     "재전사 시 최신 용어 교정 반영 가능")
+                     "새 -o 워크스페이스 재전사 시 최신 용어 교정 반영 가능")
     return lines
 
 

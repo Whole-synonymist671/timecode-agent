@@ -14,12 +14,19 @@ from weakref import WeakKeyDictionary
 from .fsio import write_text_atomic
 from .image_model import normalize_event, normalize_image_path, record_sort_key
 from .image_types import ImageEvent, ImageEventInput
+from .revision import (
+    RevisionBindingError,
+    RevisionInputSignature,
+    bind_record_to_workspace,
+    revision_input_signature,
+    validate_record_revision,
+)
 from .workspace import Workspace, load_json
 from .workspace_lock import stable_workspace_lock
 
 PROVENANCE_FILENAME: Final = "image-provenance.jsonl"
 
-type _Signature = tuple[int, int, int, int] | None
+type _Signature = tuple[int, int, int, int, RevisionInputSignature] | None
 type _EventCache = tuple[_Signature, list[ImageEvent], bool, int]
 _EVENT_CACHE: WeakKeyDictionary[Workspace, _EventCache] = WeakKeyDictionary()
 
@@ -43,7 +50,13 @@ def _signature(ws: Workspace) -> _Signature:
         stat = _provenance_path(ws).stat()
     except FileNotFoundError:
         return None
-    return stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size
+    return (
+        stat.st_ino,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+        stat.st_size,
+        revision_input_signature(ws),
+    )
 
 
 def _parse_event_lines(
@@ -57,7 +70,15 @@ def _parse_event_lines(
             raw = json.loads(line.decode("utf-8"))
             if not isinstance(raw, dict):
                 raise ValueError("event must be an object")
+            validate_record_revision(ws, raw)
             events.append(normalize_event(ws, raw, preserve_persisted_id=True))
+        except RevisionBindingError as error:
+            print(
+                "warning: skipping revision-incompatible "
+                "image-provenance.jsonl line "
+                f"{first_lineno + offset}: {error}",
+                file=sys.stderr,
+            )
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
             print(
                 "warning: skipping corrupt image-provenance.jsonl line "
@@ -80,6 +101,7 @@ def _load_events_unlocked(ws: Workspace) -> list[ImageEvent]:
         and cached[0] is not None
         and cached[2]
         and cached[0][0] == signature[0]
+        and cached[0][4] == signature[4]
         and cached[0][3] < signature[3]
     ):
         with _provenance_path(ws).open("rb") as ledger:
@@ -117,37 +139,51 @@ def append_image_provenance(
     ws: Workspace, entries: Sequence[ImageEventInput]
 ) -> list[ImageEvent]:
     """Append only unseen artifact-cause edges under a POSIX file lock."""
-    incoming = [normalize_event(ws, entry) for entry in entries]
-    if not incoming:
+    if not entries:
         return []
-    with _provenance_lock(ws, exclusive=True):
-        existing = _load_events_unlocked(ws)
-        cached = _EVENT_CACHE.get(ws)
-        known = {event["edge_id"] for event in existing}
-        missing: list[ImageEvent] = []
-        for event in incoming:
-            if event["edge_id"] not in known:
-                known.add(event["edge_id"])
-                missing.append(event)
-        if not missing:
-            return []
-        path = _provenance_path(ws)
-        prefix = ""
-        if path.is_file() and path.stat().st_size:
-            with path.open("rb") as ledger:
-                ledger.seek(-1, 2)
-                if ledger.read(1) not in (b"\n", b"\r"):
-                    prefix = "\n"
-        with path.open("a", encoding="utf-8") as ledger:
-            ledger.write(prefix)
-            ledger.writelines(
-                json.dumps(event, ensure_ascii=False) + "\n" for event in missing
+    legacy_operation_lock = not ws.workspace_lock_path.is_file()
+    with stable_workspace_lock(
+        ws.root,
+        ws.workspace_lock_path,
+        exclusive=legacy_operation_lock,
+        allow_reentrant_exclusive=legacy_operation_lock,
+    ):
+        incoming = [
+            normalize_event(ws, bind_record_to_workspace(ws, entry))
+            for entry in entries
+        ]
+        with _provenance_lock(ws, exclusive=True):
+            existing = _load_events_unlocked(ws)
+            cached = _EVENT_CACHE.get(ws)
+            known = {event["edge_id"] for event in existing}
+            missing: list[ImageEvent] = []
+            for event in incoming:
+                if event["edge_id"] not in known:
+                    known.add(event["edge_id"])
+                    missing.append(event)
+            if not missing:
+                return []
+            path = _provenance_path(ws)
+            prefix = ""
+            if path.is_file() and path.stat().st_size:
+                with path.open("rb") as ledger:
+                    ledger.seek(-1, 2)
+                    if ledger.read(1) not in (b"\n", b"\r"):
+                        prefix = "\n"
+            with path.open("a", encoding="utf-8") as ledger:
+                ledger.write(prefix)
+                ledger.writelines(
+                    json.dumps(event, ensure_ascii=False) + "\n"
+                    for event in missing
+                )
+            previous_lines = cached[3] if cached is not None else len(existing)
+            _EVENT_CACHE[ws] = (
+                _signature(ws),
+                existing + missing,
+                True,
+                previous_lines + len(missing),
             )
-        previous_lines = cached[3] if cached is not None else len(existing)
-        _EVENT_CACHE[ws] = (
-            _signature(ws), existing + missing, True, previous_lines + len(missing)
-        )
-        return missing
+            return missing
 
 
 def record_legacy_capture_reasons(
@@ -158,32 +194,49 @@ def record_legacy_capture_reasons(
     if not reasoned:
         return
     path = ws.root / "captures.json"
-    with _provenance_lock(ws, exclusive=True):
-        existing = load_json(path)
-        if path.is_file() and not isinstance(existing, list):
-            print(
-                "warning: preserving corrupt captures.json; canonical image "
-                "provenance was still recorded",
-                file=sys.stderr,
-            )
-            return
-        by_file: dict[str, dict[str, object]] = {
-            item["file"]: item
-            for item in existing or []
-            if isinstance(item, dict) and isinstance(item.get("file"), str)
-        }
-        for entry in reasoned:
-            path_value = entry.get("path") or entry.get("file")
-            if not isinstance(path_value, str):
-                continue
-            file = PurePosixPath(normalize_image_path(path_value)).name
-            previous = by_file.get(file, {})
-            compatible = {
-                key: value for key, value in entry.items()
-                if key not in {"schema", "path", "source", "edge_id", "causes"}
+    legacy_operation_lock = not ws.workspace_lock_path.is_file()
+    with stable_workspace_lock(
+        ws.root,
+        ws.workspace_lock_path,
+        exclusive=legacy_operation_lock,
+        allow_reentrant_exclusive=legacy_operation_lock,
+    ):
+        with _provenance_lock(ws, exclusive=True):
+            existing = load_json(path)
+            if path.is_file() and not isinstance(existing, list):
+                print(
+                    "warning: preserving corrupt captures.json; canonical image "
+                    "provenance was still recorded",
+                    file=sys.stderr,
+                )
+                return
+            by_file: dict[str, dict[str, object]] = {
+                item["file"]: item
+                for item in existing or []
+                if isinstance(item, dict) and isinstance(item.get("file"), str)
             }
-            by_file[file] = {**previous, **compatible, "file": file}
-        ordered = sorted(by_file.values(), key=record_sort_key)
-        serialized = json.dumps(ordered, ensure_ascii=False, indent=1)
-        if not path.is_file() or path.read_text(encoding="utf-8") != serialized:
-            write_text_atomic(path, serialized)
+            for entry in reasoned:
+                path_value = entry.get("path") or entry.get("file")
+                if not isinstance(path_value, str):
+                    continue
+                file = PurePosixPath(normalize_image_path(path_value)).name
+                previous = by_file.get(file, {})
+                compatible = {
+                    key: value
+                    for key, value in entry.items()
+                    if key not in {
+                        "schema",
+                        "path",
+                        "source",
+                        "edge_id",
+                        "causes",
+                    }
+                }
+                by_file[file] = {**previous, **compatible, "file": file}
+            ordered = sorted(by_file.values(), key=record_sort_key)
+            serialized = json.dumps(ordered, ensure_ascii=False, indent=1)
+            if (
+                not path.is_file()
+                or path.read_text(encoding="utf-8") != serialized
+            ):
+                write_text_atomic(path, serialized)

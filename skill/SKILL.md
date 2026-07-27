@@ -77,12 +77,13 @@ va ingest "<URL>" --signals -o "<absolute-workspace>"
 
 Default local workspace is `./va-out/<stem>` under the CWD; URL default is
 `./va-out/url-<md5-prefix>`. Always pass an absolute `-o` for URLs so the resume
-path stays knowable. If `manifest.json` exists, do not re-ingest — resume with
-`va brief <ws>`. For URLs prefer the fastest source: manual subtitles >
+path stays knowable. If `manifest.json` exists, resume with `va brief <ws>`;
+`va ingest` enforces this and also rejects manifest-less directories containing
+durable evidence. For URLs prefer the fastest source: manual subtitles >
 uploader auto-captions (original language) > whisper. For timestamp precision,
 choose `--force-whisper` **on the first ingest** or a new workspace (different
-`-o`); re-transcribing over a workspace that already holds checkpoints stacks
-old evidence on a different transcript.
+`-o`). A new source or transcript generation always gets a fresh workspace so
+old evidence cannot be rebound to it.
 
 ### 0-1. Content mode — fix the signal weighting (dogfooding lesson)
 
@@ -106,8 +107,9 @@ full-res capture. Ingest and overview exceptions are in
 ### 1. First-pass inference — transcript only (zero frames)
 
 If the brief has `chapters:`, use those boundaries as draft spans and re-split
-only the chapters that contradict the transcript. Split the transcript at
-meaning shifts and record checkpoints.
+only chapters that contradict the transcript. If speakers matter, run
+`va diarize <ws>` before any checkpoint; it advances the transcript revision
+and refuses after evidence exists. Then split at meaning shifts and record.
 
 ```bash
 va checkpoint add <ws> --json-file - <<'EOF'
@@ -131,8 +133,8 @@ body is long or full of quotes and non-ASCII text.
 
 Look only where one of these holds: confidence < 0.7, ASR `conf < 0.6`, a
 speaker or location change, 20s or more of silence or gap, an ambiguous
-referent, a change in who is on screen, a burst or scene change. Use
-`va diarize <ws>` when speaker structure matters.
+referent, a change in who is on screen, a burst or scene change. Diarization
+must already be complete; do not mutate the transcript at this stage.
 
 Narrow a long unknown stretch with an overview scan before individual captures.
 
@@ -236,7 +238,9 @@ Details in [Output handoff](references/output-handoff.md).
   boundary if it is clipped.
 - Handoff: `va export <ws> --format xml|otio|fcpxml|srt|edl|md`. For CapCut use
   srt only; manipulating the unofficial draft JSON is forbidden. In
-  `--ids cp-004,cp-007` the **listed order is the cut order**.
+  `--ids cp-004,cp-007` the **listed order is the cut order**. Revision-bound
+  NLE handoff requires complete decoded-CFR proof; VFR, unknown, or irregular
+  sources reject it. Use a decoded-CFR delivery source or text handoff.
 - Record a reusable edit plan with `va sequence add <ws> --json-file -` and hand
   it off with `va export <ws> --format otio --sequence seq-001`. An edit plan
   never modifies the fact ledger.

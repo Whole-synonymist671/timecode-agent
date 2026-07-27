@@ -103,13 +103,26 @@ def cmd_audit(args) -> int:
         f"readiness={report['readiness_counts']} "
         f"legacy={report['readiness_legacy_counts']}"
     )
-    levels = report.get("verification_levels")
-    if levels:
+    declared = report.get("verification_levels_declared") or {}
+    grounded = report.get("verification_levels_grounded") or {}
+    if declared or grounded:
+        # 두 축을 함께 인쇄한다. 선언 축만 보이던 동안 실측 코퍼스의 무근거
+        # 46/165가 요약에서 사라졌다 — 계산해 두고 말하지 않으면 사람은
+        # "전부 근거 있음"으로 읽는다(2026-07-27).
         ko = {"cross_modal": "교차모달", "visual_only": "시각단독",
               "transcript_only": "전사단독", "unsupported": "무근거"}
-        print("검증 수준: " + " · ".join(
-            f"{ko.get(code, code)} {count}"
-            for code, count in levels.items()))
+
+        def _fmt(levels: dict[str, int], *, show_zero_unsupported: bool) -> str:
+            items = dict(levels)
+            if show_zero_unsupported:
+                items.setdefault("unsupported", 0)
+            return " · ".join(
+                f"{ko.get(code, code)} {count}"
+                for code, count in items.items())
+
+        print("검증 수준(선언): " + _fmt(declared, show_zero_unsupported=False))
+        # 실지지 축은 무근거 0도 인쇄한다 — 경계가 비었다는 사실 자체가 신호다.
+        print("검증 수준(실지지): " + _fmt(grounded, show_zero_unsupported=True))
     wiki = report.get("wiki")
     if wiki:
         over = " 초과!" if wiki["corpus_index_over_limit"] else ""
@@ -131,13 +144,30 @@ def cmd_audit(args) -> int:
             "(엔티티 2+ 인데 relations 미기재 — --json의 "
             "relation_candidates에서 대상 확인)"
         )
+    access = report.get("access") or {}
+    if access.get("total"):
+        by_command = " · ".join(
+            f"{name} {count}" for name, count in access["by_command"].items())
+        empty = access.get("empty_result_reads") or 0
+        # 결과 0건 조회는 코퍼스가 답하지 못한 질문 — 커버리지 공백의 신호다.
+        tail = f" · 무응답 {empty}" if empty else ""
+        print(f"조회: 총 {access['total']}회 ({by_command})"
+              f"{tail} · 최근 {access['last_ts']}")
+    else:
+        print("조회: 기록 없음 — 이 코퍼스가 읽힌 적이 있는지 알 수 없다")
     integrity = report.get("wiki_integrity")
     if integrity:
         broken = integrity["broken_links"]
         orphans = integrity["orphan_entities"]
-        print(f"무결성: 링크 깨짐 {len(broken)} · 고아 페이지 {len(orphans)}")
+        # 재배정은 링크가 살아 있는 채로 대상만 바뀌는 회귀라, 깨진 링크
+        # 검사로는 절대 잡히지 않는다.
+        reassigned = integrity.get("reassigned_entities") or []
+        print(f"무결성: 링크 깨짐 {len(broken)} · 고아 페이지 {len(orphans)}"
+              f" · 슬러그 재배정 {len(reassigned)}")
         for item in (broken + orphans)[:8]:
             print(f"  ✗ {item}")
+        for item in reassigned[:8]:
+            print(f"  ↻ {item}")
     improvements = report.get("improvements")
     if improvements and any(improvements.values()):
         print("개선 후보:")
@@ -246,6 +276,28 @@ def cmd_glossary(args) -> int:
     return 0
 
 
+def _resolve_corpus(args) -> Path | None:
+    from .workspace_discovery import MultipleProjectionRootsError, corpus_root
+
+    explicit = getattr(args, "_projection_root", None)
+    if explicit:
+        return Path(explicit)
+    try:
+        return corpus_root(args.roots or None)
+    except (MultipleProjectionRootsError, OSError, ValueError):
+        return None
+
+
+def _record_corpus_read(args, command: str, **detail) -> None:
+    """조회를 관측한다 — 실패해도 조회 자체는 막지 않는다."""
+    from .access_log import record_access
+
+    corpus = _resolve_corpus(args)
+    if corpus is None:
+        return
+    record_access(corpus, command, **detail)
+
+
 def cmd_search(args) -> int:
     from .search import search_workspaces
 
@@ -256,6 +308,7 @@ def cmd_search(args) -> int:
         workspace_paths=getattr(args, "_workspace_paths", None),
         projection_root=getattr(args, "_projection_root", None),
     )
+    _record_corpus_read(args, "search", query=args.query, hits=len(hits))
     if args.json:
         print(json.dumps(hits, ensure_ascii=False))
     else:
@@ -279,6 +332,7 @@ def cmd_index(args) -> int:
         workspace_paths=getattr(args, "_workspace_paths", None),
         projection_root=getattr(args, "_projection_root", None),
     )
+    _record_corpus_read(args, "index", hits=n)
     print(f"{dest} — {n}개 워크스페이스")
     return 0
 
@@ -291,6 +345,7 @@ def cmd_view(args) -> int:
         workspace_paths=getattr(args, "_workspace_paths", None),
         projection_root=getattr(args, "_projection_root", None),
     )
+    _record_corpus_read(args, "view", hits=n)
     print(f"{dest} — {n}개 워크스페이스")
     return 0
 
@@ -304,6 +359,7 @@ def cmd_wiki(args) -> int:
         workspace_paths=getattr(args, "_workspace_paths", None),
         projection_root=getattr(args, "_projection_root", None),
     )
+    _record_corpus_read(args, "wiki", hits=c["entities"])
     print(f"{dest} — 엔티티 {c['entities']} · 태그 {c['tags']} · "
           f"관계 {c['relations']} · 대사 {c['quotes']}")
     return 0

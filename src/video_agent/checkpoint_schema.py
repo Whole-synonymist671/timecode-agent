@@ -78,6 +78,14 @@ def _is_finite_number(value: CheckpointValue) -> TypeGuard[int | float]:
 def validate_checkpoint(
     ws: Workspace, obj: CheckpointObject
 ) -> ValidatedCheckpoint:
+    checkpoint = validate_checkpoint_shape(obj)
+    if checkpoint.span[1] > float(ws.manifest["duration"]):
+        raise CheckpointValidationError(SPAN_END_EXCEEDS_DURATION)
+    return checkpoint
+
+
+def validate_checkpoint_shape(obj: CheckpointObject) -> ValidatedCheckpoint:
+    """Validate workspace-independent fields before reading workspace state."""
     checkpoint_id = obj.get("id")
     if not isinstance(checkpoint_id, str) or not checkpoint_id.strip():
         raise CheckpointValidationError("checkpoint requires non-empty 'id'")
@@ -105,9 +113,6 @@ def validate_checkpoint(
         raise CheckpointValidationError(
             "'span' must be [start, end] seconds with 0 <= start < end"
         )
-    if end > float(ws.manifest["duration"]):
-        raise CheckpointValidationError(SPAN_END_EXCEEDS_DURATION)
-
     if "confidence" in obj:
         raw_confidence = obj["confidence"]
         if not _is_finite_number(raw_confidence) or not 0 <= raw_confidence <= 1:

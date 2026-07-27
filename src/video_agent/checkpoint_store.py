@@ -13,10 +13,18 @@ from .checkpoint_schema import (
     SPAN_END_EXCEEDS_DURATION,
     CheckpointObject,
     CheckpointValidationError,
+    CheckpointValue,
     ValidatedCheckpoint,
     validate_checkpoint,
+    validate_checkpoint_shape,
     validate_transition,
 )
+from .revision import (
+    RevisionBindingError,
+    bind_record_to_workspace,
+    validate_record_revision,
+)
+from .temporal import TemporalSpanError, canonicalize_span
 from .workspace import Workspace
 from .workspace_lock import stable_workspace_lock
 
@@ -70,6 +78,39 @@ def _checkpoint_signature(ws: Workspace) -> _CheckpointSignature:
     return stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size
 
 
+def _normalize_checkpoint_record(
+    ws: Workspace,
+    obj: CheckpointObject,
+    *,
+    writing: bool,
+) -> CheckpointObject:
+    normalized = (
+        bind_record_to_workspace(ws, obj)
+        if writing
+        else dict(obj)
+    )
+    if not writing:
+        validate_record_revision(ws, normalized)
+    projected, canonical = canonicalize_span(
+        ws,
+        normalized.get("span"),
+        normalized.get("temporal_span"),
+    )
+    normalized_span: list[CheckpointValue] = [projected[0], projected[1]]
+    normalized["span"] = normalized_span
+    if canonical is not None:
+        canonical_value: dict[str, CheckpointValue] = {
+            "stream_id": canonical["stream_id"],
+            "start_pts": canonical["start_pts"],
+            "end_pts_exclusive": canonical["end_pts_exclusive"],
+            "time_base_num": canonical["time_base_num"],
+            "time_base_den": canonical["time_base_den"],
+            "timing_revision_id": canonical["timing_revision_id"],
+        }
+        normalized["temporal_span"] = canonical_value
+    return normalized
+
+
 def _apply_checkpoint_lines(
     ws: Workspace,
     lines: list[bytes],
@@ -87,19 +128,34 @@ def _apply_checkpoint_lines(
                 raise CheckpointValidationError(
                     "checkpoint line must contain a JSON object"
                 )
+            obj = _normalize_checkpoint_record(ws, obj, writing=False)
             try:
                 checkpoint = validate_checkpoint(ws, obj)
             except CheckpointValidationError as error:
                 if error.message != SPAN_END_EXCEEDS_DURATION:
                     raise
-                span = obj["span"]
+                span = obj.get("span")
+                if not isinstance(span, (list, tuple)) or len(span) != 2:
+                    raise
+                start_value, end_value = span
+                if (
+                    isinstance(start_value, bool)
+                    or not isinstance(start_value, (int, float))
+                    or isinstance(end_value, bool)
+                    or not isinstance(end_value, (int, float))
+                ):
+                    raise
                 duration = float(ws.manifest["duration"])
                 if not _legacy_span_end_is_rounding_drift(
                     duration=duration,
-                    end=float(span[1]),
+                    end=float(end_value),
                 ):
                     raise
-                obj = {**obj, "span": [span[0], duration]}
+                repaired_span: list[CheckpointValue] = [
+                    float(start_value),
+                    duration,
+                ]
+                obj = {**obj, "span": repaired_span}
                 checkpoint = validate_checkpoint(ws, obj)
             previous = by_id.get(checkpoint.checkpoint_id)
             validate_transition(previous[0] if previous else None, checkpoint)
@@ -109,10 +165,17 @@ def _apply_checkpoint_lines(
             by_id[checkpoint.checkpoint_id] = (checkpoint, projected)
             if history is not None:
                 history.append(obj)
+        except RevisionBindingError as error:
+            print(
+                "warning: skipping revision-incompatible checkpoints.jsonl "
+                f"line {first_lineno + offset}: {error}",
+                file=sys.stderr,
+            )
         except (
             UnicodeDecodeError,
             json.JSONDecodeError,
             CheckpointValidationError,
+            TemporalSpanError,
         ):
             print(
                 "warning: skipping corrupt checkpoints.jsonl line "
@@ -182,42 +245,51 @@ def _latest_checkpoint(
 
 
 def append_checkpoint(ws: Workspace, obj: CheckpointObject) -> CheckpointObject:
-    checkpoint = validate_checkpoint(ws, obj)
-    with _checkpoint_lock(ws, exclusive=True):
-        previous = (
-            _latest_checkpoint(ws, checkpoint.checkpoint_id)
-            if checkpoint.status == "hypothesized"
-            else None
-        )
-        validate_transition(previous, checkpoint)
-        signature = _checkpoint_signature(ws)
-        cached = _CHECKPOINT_CACHE.get(ws)
-        line_prefix = ""
-        if signature is not None and signature[3] > 0:
-            with ws.checkpoints_path.open("rb") as checkpoint_file:
-                checkpoint_file.seek(-1, 2)
-                if checkpoint_file.read(1) not in (b"\n", b"\r"):
-                    line_prefix = "\n"
+    validate_checkpoint_shape(obj)
+    legacy_operation_lock = not ws.workspace_lock_path.is_file()
+    with stable_workspace_lock(
+        ws.root,
+        ws.workspace_lock_path,
+        exclusive=legacy_operation_lock,
+        allow_reentrant_exclusive=legacy_operation_lock,
+    ):
+        normalized = _normalize_checkpoint_record(ws, obj, writing=True)
+        checkpoint = validate_checkpoint(ws, normalized)
+        with _checkpoint_lock(ws, exclusive=True):
+            previous = (
+                _latest_checkpoint(ws, checkpoint.checkpoint_id)
+                if checkpoint.status == "hypothesized"
+                else None
+            )
+            validate_transition(previous, checkpoint)
+            signature = _checkpoint_signature(ws)
+            cached = _CHECKPOINT_CACHE.get(ws)
+            line_prefix = ""
+            if signature is not None and signature[3] > 0:
+                with ws.checkpoints_path.open("rb") as checkpoint_file:
+                    checkpoint_file.seek(-1, 2)
+                    if checkpoint_file.read(1) not in (b"\n", b"\r"):
+                        line_prefix = "\n"
 
-        with ws.checkpoints_path.open("a", encoding="utf-8") as checkpoint_file:
-            checkpoint_file.write(
-                line_prefix + json.dumps(obj, ensure_ascii=False) + "\n"
-            )
-        if cached is not None and cached[0] == signature:
-            prior = cached[1].get(checkpoint.checkpoint_id)
-            projected = _inherit_visual_evidence(
-                prior[1] if prior else None, obj
-            )
-            cached[1][checkpoint.checkpoint_id] = (checkpoint, projected)
-            _CHECKPOINT_CACHE[ws] = (
-                _checkpoint_signature(ws),
-                cached[1],
-                cached[2] + 1,
-                True,
-            )
-        else:
-            _CHECKPOINT_CACHE.pop(ws, None)
-    return obj
+            with ws.checkpoints_path.open("a", encoding="utf-8") as checkpoint_file:
+                checkpoint_file.write(
+                    line_prefix + json.dumps(normalized, ensure_ascii=False) + "\n"
+                )
+            if cached is not None and cached[0] == signature:
+                prior = cached[1].get(checkpoint.checkpoint_id)
+                projected = _inherit_visual_evidence(
+                    prior[1] if prior else None, normalized
+                )
+                cached[1][checkpoint.checkpoint_id] = (checkpoint, projected)
+                _CHECKPOINT_CACHE[ws] = (
+                    _checkpoint_signature(ws),
+                    cached[1],
+                    cached[2] + 1,
+                    True,
+                )
+            else:
+                _CHECKPOINT_CACHE.pop(ws, None)
+    return normalized
 
 
 def load_checkpoints(ws: Workspace) -> list[CheckpointObject]:

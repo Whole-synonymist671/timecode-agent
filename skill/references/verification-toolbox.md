@@ -80,6 +80,15 @@ va diarize <ws> [--num-speakers N]
 
 - Auto backend: with an HF token, try pyannote then fall back to ungated
   sherpa. Without a token, use sherpa immediately.
+- Run this before checkpoints, image provenance, sequences, corrections, or
+  authored wiki evidence. It advances the transcript revision and refuses to
+  run after transcript-dependent evidence exists.
+- A current Python-API draft binds and validates its source before the backend
+  runs. A pre-revision markerless workspace is read-only; ingest it into a fresh
+  output path before diarization.
+- Canonical transcript/manifest/diarization rewrites use an fsynced rollback
+  journal. A catchable failure rolls back before return; after process loss,
+  reopening the workspace completes the rollback before reads continue.
 - BGM-heavy entertainment tends to over-segment; prioritize speakers with the
   most speech.
 - The agent maps anonymous labels (S0/S1) to visual nameplates or microphone

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Final
 
+from .workspace import load_json
+
 DEFAULT_WORKSPACE_ROOT: Final = Path("./va-out")
 
 
@@ -40,8 +42,12 @@ def corpus_root(roots: list[str] | None) -> Path:
     raise MultipleProjectionRootsError(tuple(candidates))
 
 
-def find_workspaces(roots: list[str] | None) -> list[Path]:
-    """Return canonical workspace paths without crossing a root boundary."""
+def find_workspaces(
+    roots: list[str] | None,
+    *,
+    include_building: bool = False,
+) -> list[Path]:
+    """Return canonical workspaces, omitting incomplete ingests by default."""
     requested_roots = (
         [Path(raw) for raw in roots]
         if roots
@@ -69,7 +75,15 @@ def find_workspaces(roots: list[str] | None) -> list[Path]:
             candidate = candidate_path.resolve()
             if not candidate.is_relative_to(boundary):
                 continue
-            if candidate in seen or not (candidate / "manifest.json").is_file():
+            manifest_path = candidate / "manifest.json"
+            if candidate in seen or not manifest_path.is_file():
+                continue
+            manifest = load_json(manifest_path)
+            if (
+                not include_building
+                and isinstance(manifest, dict)
+                and manifest.get("ingest_state") == "building"
+            ):
                 continue
             seen.add(candidate)
             workspaces.append(candidate)

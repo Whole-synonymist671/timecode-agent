@@ -255,6 +255,13 @@ def ingest_session(
         pending.workspace_lock_path,
         exclusive=True,
     ):
+        from .revision import (
+            _write_building_manifest,
+            assert_ingest_target_unused,
+        )
+
+        assert_ingest_target_unused(root, frozen_video)
+        _write_building_manifest(root, frozen_video)
         yield _ingest_locked(
             frozen_video,
             out=root,
@@ -332,6 +339,9 @@ def _ingest_locked(
         out = dest_dir
 
     ws = Workspace.create(video, out=out)
+    from .revision import seal_ingest_source
+
+    seal_ingest_source(ws)
     # 사전지식은 전사보다 먼저 확정한다 — 그래야 hotwords 프라이어로 쓸 수 있다.
     from .priors import local_priors, read_source_priors
 
@@ -546,6 +556,10 @@ def _ingest_locked(
     if words:
         write_text_atomic(ws.root / "words.json",
                           json.dumps(words, ensure_ascii=False))
+    else:
+        # A failed building attempt may have written words before publication.
+        # A same-source retry with subtitles/no speech must not publish them.
+        (ws.root / "words.json").unlink(missing_ok=True)
     manifest = ws.manifest
     # 전사 설정 계보 스탬핑 — 어떤 hotwords 세대의 산물인지(오염으로 제외된
     # 경우 그 사실까지)가 남아야 corrections 코퍼스와 재전사 판단이 선다.
@@ -564,6 +578,9 @@ def _ingest_locked(
                          if speech_seconds else None),
                      "transcript_repair": repair})
     ws.save_manifest(manifest)
+    from .revision import publish_workspace_revisions
+
+    publish_workspace_revisions(ws)
     if signals:
         from .highlights import compute_highlights
         from .scenes import compute_scenes

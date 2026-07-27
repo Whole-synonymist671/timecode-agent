@@ -18,10 +18,24 @@ from typing import Protocol, runtime_checkable
 
 from .audio_cache import cached_audio_wav
 from .cache_paths import cache_root
+from .diarization_transaction import (
+    begin_diarization_transaction,
+    complete_diarization_transaction,
+    rollback_diarization_transaction_locked,
+)
 from .fsio import write_text_atomic
 from .ingest import Segment
+from .probe import source_stat_fingerprint
+from .revision import (
+    RevisionBindingError,
+    assert_transcript_revision_update_allowed,
+    current_revision_bindings,
+    publish_workspace_revisions,
+    revision_input_signature,
+)
 from .transcript_segments import load_transcript_segments_for_update
 from .workspace import Workspace
+from .workspace_lock import stable_workspace_lock
 
 _GATE_HELP = (
     "pyannote 모델 접근 실패 — 다음 3단계가 필요합니다:\n"
@@ -221,7 +235,48 @@ def compute_diarization(
     num_speakers: int | None = None,
     backend: str = "auto",
 ) -> list[dict]:
+    """Compute and publish one transcript revision under an exclusive lease."""
+    with stable_workspace_lock(
+        ws.root,
+        ws.workspace_lock_path,
+        exclusive=True,
+        allow_reentrant_exclusive=True,
+    ):
+        rollback_diarization_transaction_locked(ws.root)
+        return _compute_diarization_locked(
+            ws,
+            num_speakers=num_speakers,
+            backend=backend,
+        )
+
+
+def _compute_diarization_locked(
+    ws: Workspace,
+    num_speakers: int | None = None,
+    backend: str = "auto",
+) -> list[dict]:
+    previous_revision = assert_transcript_revision_update_allowed(ws)
+    if (
+        previous_revision is None
+        and ws.manifest.get("revision_draft") is not True
+    ):
+        raise RevisionBindingError(
+            "legacy workspace is read-only for diarization; ingest into a "
+            "fresh revision-bound workspace"
+        )
     transcript = load_transcript_segments_for_update(ws.transcript_path)
+    if previous_revision is None:
+        previous_revision = publish_workspace_revisions(ws)
+    revision_inputs_before = revision_input_signature(ws)
+    source_stat_before = source_stat_fingerprint(ws.video.stat())
+    transcript_before = ws.transcript_path.read_text(encoding="utf-8")
+    manifest_before = ws.manifest_path.read_text(encoding="utf-8")
+    diarization_path = ws.root / "diarization.json"
+    diarization_before = (
+        diarization_path.read_text(encoding="utf-8")
+        if diarization_path.is_file()
+        else None
+    )
     segments = [
         Segment(
             id=(
@@ -279,13 +334,47 @@ def compute_diarization(
                 print(f"pyannote 불가 → sherpa 폴백\n({e})", file=sys.stderr)
                 turns = _sherpa_turns(wav, num_speakers)
                 used = "sherpa"
-    write_text_atomic(ws.root / "diarization.json",
-                      json.dumps(turns, ensure_ascii=False, indent=1))
-    ws.stamp_tool("diarize", used)
-
     merged = assign_speakers(segments, turns)
-    write_text_atomic(ws.transcript_path,
-                      json.dumps(merged, ensure_ascii=False, indent=1))
+    revision_after_backend = assert_transcript_revision_update_allowed(ws)
+    if revision_after_backend != previous_revision:
+        raise RevisionBindingError(
+            "workspace revision changed during diarization"
+        )
+    if revision_input_signature(ws) != revision_inputs_before:
+        raise RevisionBindingError(
+            "workspace revision source changed during diarization"
+        )
+    if current_revision_bindings(ws) != previous_revision:
+        raise RevisionBindingError(
+            "workspace revision changed during diarization"
+        )
+    begin_diarization_transaction(
+        ws.root,
+        manifest_text=manifest_before,
+        transcript_text=transcript_before,
+        diarization_text=diarization_before,
+    )
+    try:
+        write_text_atomic(
+            diarization_path,
+            json.dumps(turns, ensure_ascii=False, indent=1),
+        )
+        write_text_atomic(
+            ws.transcript_path,
+            json.dumps(merged, ensure_ascii=False, indent=1),
+        )
+        manifest = ws.manifest
+        tools = dict(manifest.get("tools") or {})
+        tools["diarize"] = used
+        publish_workspace_revisions(
+            ws,
+            manifest_updates={"tools": tools},
+            expected_source_stat=source_stat_before,
+        )
+        complete_diarization_transaction(ws.root)
+    except BaseException:
+        rollback_diarization_transaction_locked(ws.root)
+        raise
     print(f"speakers: {len({t['speaker'] for t in turns})}, "
           f"turns: {len(turns)} — transcript.json에 speaker 필드 병합",
           file=sys.stderr)

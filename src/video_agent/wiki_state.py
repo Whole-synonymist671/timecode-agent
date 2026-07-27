@@ -7,11 +7,15 @@ import re
 import stat
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
 
 from .fsio import write_text_atomic
 
 NOTES_START = "<!-- tca:notes:start -->"
 NOTES_END = "<!-- tca:notes:end -->"
+# `va wiki` 재생성이 남기는 엔티티 recall 기록 — 감사가 읽는다.
+ENTITY_RECALL_FILENAME: Final = ".tca-entity-recall.json"
+
 NOTES_PLACEHOLDER = (
     "\n(에이전트 서술 구역 — 재생성해도 보존된다. 다각 관점 종합·"
     "모순 플래그를 여기에 기록)\n"

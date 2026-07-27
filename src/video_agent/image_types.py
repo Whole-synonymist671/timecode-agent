@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import NotRequired, TypedDict
 
+from .temporal import CanonicalTemporalSpan
+
 
 class ImageMetadata(TypedDict, total=False):
     t: float
@@ -18,6 +20,10 @@ class ImageMetadata(TypedDict, total=False):
     cols: int
     render_version: int
     metadata: dict[str, object]
+    temporal_span: CanonicalTemporalSpan
+    source_revision_id: str
+    transcript_revision_id: str
+    timing_revision_id: str
 
 
 class ImageEventInput(ImageMetadata, total=False):

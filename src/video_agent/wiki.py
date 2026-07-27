@@ -61,6 +61,7 @@ from .search import corpus_root
 from .status import _workspace_status_snapshot
 from .timestamps import fmt_ts_compact
 from .wiki_state import (
+    ENTITY_RECALL_FILENAME,
     NOTES_END,
     NOTES_PLACEHOLDER,
     NOTES_START,
@@ -144,6 +145,9 @@ class _Aggregate:
     doc_path_of: dict[str, str] = field(default_factory=dict)
     display_name_of: dict[str, str] = field(default_factory=dict)
     archived_target_of: dict[str, str] = field(default_factory=dict)
+    # 근거 게이트에서 탈락해 이 위키에 실리지 않은 종결 체크포인트 수.
+    # 빠진 것을 세지 않으면 위키는 코퍼스 전부를 담은 것처럼 읽힌다.
+    omitted_unsupported: dict[str, int] = field(default_factory=dict)
 
 
 def _collect(
@@ -178,6 +182,11 @@ def _collect(
         meta = ws_meta(ws, status_snapshot=status_snapshot)
         agg.modes[workspace_id] = meta["mode_head"]
         agg.display_name_of[workspace_id] = meta["title"] or name
+        omitted = len(status_snapshot.terminal_checkpoints) - len(
+            status_snapshot.supported_checkpoints
+        )
+        if omitted > 0:
+            agg.omitted_unsupported[workspace_id] = omitted
         checkpoints = (
             load_checkpoints(ws)
             if include_hypotheses
@@ -384,6 +393,53 @@ def _alias_groups(slugs: dict[str, str]) -> list[list[str]]:
     return groups
 
 
+def _previous_slug_labels(wiki: Path) -> dict[str, str]:
+    """직전 재생성이 남긴 슬러그→라벨 매핑."""
+    try:
+        payload = json.loads(
+            (wiki / ENTITY_RECALL_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    mapping = payload.get("slug_labels") if isinstance(payload, dict) else None
+    if not isinstance(mapping, dict):
+        return {}
+    return {str(k): str(v) for k, v in mapping.items()}
+
+
+def _record_entity_recall(
+    wiki: Path, slug_labels: dict[str, str], previous: dict[str, str]
+) -> list[str]:
+    """슬러그 재배정을 감지해 남기고, 그 목록을 돌려준다.
+
+    위험은 페이지가 사라지는 것이 아니다 — 재생성은 원장에 없는 페이지도
+    보존한다. 실제 회귀는 같은 파일명이 **다른 대상**을 가리키게 되는
+    것이다. 슬러그 배정이 디스크에 이미 있는 페이지 집합에 의존해 유입
+    순서로 갈리기 때문이다(spec §5.3 실증). 외부 백링크와 보존 노트의
+    귀속이 조용히 어긋난다.
+    """
+    reassigned = sorted(
+        f"{slug}: {previous[slug]} → {label}"
+        for slug, label in slug_labels.items()
+        if slug in previous and previous[slug] != label
+    )
+    dropped = sorted(set(previous) - set(slug_labels))
+    payload = {
+        "slug_labels": slug_labels,
+        "reassigned_count": len(reassigned),
+        # 전량이 아니라 표본 — 목록이 길어져도 감사 표면이 무너지지 않는다.
+        "reassigned_sample": reassigned[:20],
+        "dropped_sample": dropped[:20],
+    }
+    try:
+        write_text_atomic(
+            wiki / ENTITY_RECALL_FILENAME,
+            json.dumps(payload, ensure_ascii=False, sort_keys=True),
+        )
+    except OSError:
+        pass
+    return reassigned
+
+
 def _split_durable(
     slugs: dict[str, str], agg: _Aggregate, page_plan
 ) -> tuple[list[str], list[str]]:
@@ -418,6 +474,21 @@ def _write_index(
         "- [태그 역색인](tags.md)", "- [관계 원장](relations.md)",
         "- [대사록](quotes.md)", "",
     ]
+    # 이 위키가 담지 못한 것을 위키 자신이 밝힌다. 근거 미해소로 빠진 종결
+    # 체크포인트를 세지 않으면, 빈 자리는 "그런 일이 없었다"로 읽힌다.
+    omitted_total = sum(agg.omitted_unsupported.values())
+    if omitted_total:
+        worst = sorted(
+            agg.omitted_unsupported.items(), key=lambda kv: (-kv[1], kv[0])
+        )[:3]
+        detail = " · ".join(f"{ws} {n}" for ws, n in worst)
+        lines += [
+            f"> **근거 미해소로 빠진 종결 체크포인트 {omitted_total}건** — "
+            "이 위키는 근거가 지금 해소되는 주장만 싣는다. "
+            f"많은 순: {detail}. "
+            "`va audit`의 검증 수준(실지지)에서 전체를 본다.",
+            "",
+        ]
     # relation graph (DeepWiki-style architecture diagram, transposed)
     edges = sorted({(r["s"], r["p"], r["o"]) for r in agg.relations})
     MAX_EDGES = 60
@@ -530,6 +601,10 @@ def build_wiki(
     ):
         return wiki_index, cached_wiki["counts"]
 
+    # 재생성 직전의 슬러그→라벨 매핑. 같은 파일명이 다른 대상으로 넘어가면
+    # 외부 백링크와 보존 노트의 귀속이 조용히 어긋난다(spec §5.3 실증).
+    slug_labels_before = _previous_slug_labels(wiki)
+
     agg = _collect(ws_dirs, root, include_hypotheses)
     labels = set(agg.appearances) | set(agg.quotes_by_speaker)
     page_plan = plan_entity_pages(ent_dir, labels)
@@ -549,6 +624,12 @@ def build_wiki(
     durable, candidates = _split_durable(slugs, agg, page_plan)
     dest = _write_index(wiki, page_plan, slugs, agg, counts,
                         alias_groups, durable, candidates, ent_link)
+    reassigned = _record_entity_recall(
+        wiki,
+        {slug: label for label, slug in slugs.items()},
+        slug_labels_before,
+    )
+    counts["reassigned_entities"] = len(reassigned)
     cache["wiki"] = {
         "fp": corpus_fingerprint,
         "out_fp": directory_fingerprint(wiki, salt=wiki_salt),

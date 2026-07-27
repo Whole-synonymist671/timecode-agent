@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TypedDict
 
+from .access_log import AccessSummary, summarize_access_log
 from .corpus_projection import narrative_head
 from .narrative_audit import QualifierDropIssue, audit_narrative_qualifiers
 from .relation_candidates import RelationCandidate, candidates_from_checkpoints
@@ -52,8 +53,9 @@ class CorpusAudit(TypedDict):
     qualifier_drop_total: int
     readiness_counts: dict[str, int]
     readiness_legacy_counts: dict[str, int]
-    verification_levels: dict[str, int]
-    verification_levels_v2: dict[str, int]
+    verification_levels_declared: dict[str, int]
+    verification_levels_grounded: dict[str, int]
+    access: AccessSummary
     workspaces: list[CorpusWorkspaceAudit]
     relation_candidate_total: int
     relation_candidates: list[RelationCandidate]
@@ -113,8 +115,8 @@ def audit_corpus(
     issue_counts: Counter[str] = Counter()
     readiness_counts: Counter[str] = Counter()
     readiness_legacy_counts: Counter[str] = Counter()
-    verification_levels: Counter[str] = Counter()
-    verification_levels_v2: Counter[str] = Counter()
+    verification_levels_declared: Counter[str] = Counter()
+    verification_levels_grounded: Counter[str] = Counter()
     narrative_missing: list[str] = []
     qualifier_drop_total = 0
     workspaces: list[CorpusWorkspaceAudit] = []
@@ -133,8 +135,8 @@ def audit_corpus(
                 and narrative_head(ws) is None):
             narrative_missing.append(path.name)
         for levels in snapshot.verification.checkpoint_levels:
-            verification_levels.update([levels.declared])
-            verification_levels_v2.update([levels.grounded])
+            verification_levels_declared.update([levels.declared])
+            verification_levels_grounded.update([levels.grounded])
         evidence = status["verification_audit"]
         readiness = status["readiness"]["status"]
         readiness_legacy = status["readiness_legacy"]["status"]
@@ -166,8 +168,11 @@ def audit_corpus(
         "qualifier_drop_total": qualifier_drop_total,
         "readiness_counts": _sorted_counts(readiness_counts),
         "readiness_legacy_counts": _sorted_counts(readiness_legacy_counts),
-        "verification_levels": _sorted_counts(verification_levels),
-        "verification_levels_v2": _sorted_counts(verification_levels_v2),
+        "verification_levels_declared": _sorted_counts(verification_levels_declared),
+        "verification_levels_grounded": _sorted_counts(verification_levels_grounded),
+        # 근거 품질 옆에 소비량을 둔다 — 아무도 읽지 않는 코퍼스는
+        # 근거가 아무리 좋아도 지식으로 기능하지 않는다.
+        "access": summarize_access_log(root),
         "workspaces": workspaces,
         "relation_candidate_total": len(candidates),
         "relation_candidates": candidates[:_RELATION_CANDIDATE_DETAIL_CAP],

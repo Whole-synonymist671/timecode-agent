@@ -490,7 +490,7 @@ def run_gc(
 ) -> tuple[str, int]:
     """Orchestrate report/purge and return (text_output, exit_code)."""
     selectors = parse_selectors(purge)
-    workspaces = find_workspaces(paths)
+    workspaces = find_workspaces(paths, include_building=True)
 
     if not selectors:
         return format_report(workspaces), 0

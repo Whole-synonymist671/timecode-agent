@@ -10,7 +10,9 @@ from .checkpoint_selection import selected_checkpoints as _selected
 from .corpus_projection import narrative_head as narrative_head
 from .corpus_projection import tagfmt as tagfmt
 from .corpus_projection import ws_meta as ws_meta
+from .decoded_timing import DecodedTimingError, decoded_cfr_verified
 from .image_index import capture_reasons as capture_reasons
+from .revision import receipt_revision_fields
 from .scene_log import export_md as export_md
 from .sequence_grounding import checkpoint_revision_hash
 from .transcript_segments import load_transcript_segments
@@ -76,6 +78,7 @@ def build_receipt(
         "artifact_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
         "workspace": ws.root.name,
         "video": ws.video.name,
+        **receipt_revision_fields(ws),
     }
     if selection is not None:
         # 시퀀스 인계: 컷이 실은 핀(승격 시점 내용 증명)·상태를 그대로 승계.
@@ -128,6 +131,28 @@ def _frame_duration(fps: float) -> tuple[int, int]:
         if abs(fps - rate) < 0.005:
             return frac
     return (1, max(1, round(fps)))
+
+
+def _require_cfr_handoff(ws: Workspace) -> None:
+    """Require full decoded-PTS cadence proof for revision-bound NLE handoff."""
+    manifest = ws.manifest
+    timing = manifest.get("timing") or {}
+    if not manifest.get("source_revision_id"):
+        return
+    try:
+        verified = (
+            timing.get("vfr") is False
+            and decoded_cfr_verified(ws)
+        )
+    except DecodedTimingError as error:
+        raise ValueError(
+            "decoded-frame timing verification failed; use a text handoff"
+        ) from error
+    if not verified:
+        raise ValueError(
+            "VFR, unknown, or non-uniform decoded timing handoff is blocked; "
+            "use a decoded-CFR delivery source or a text handoff"
+        )
 
 
 def _frame_rate(m: dict) -> tuple[int, int]:
@@ -226,6 +251,7 @@ def export_edl(
     ws: Workspace, ids: list[str] | None = None,
     *, selection: list[dict] | None = None,
 ) -> str:
+    _require_cfr_handoff(ws)
     m = ws.manifest
     num, den = _timecode_rate(m)
     clip_name = ws.video.name
@@ -261,6 +287,7 @@ def export_xml(ws: Workspace, ids: list[str] | None = None) -> str:
     """
     from xml.sax.saxutils import escape
 
+    _require_cfr_handoff(ws)
     m = ws.manifest
     num, den = _timecode_rate(m)
     # xmeml 규약: NTSC 레이트는 명목 정수 timebase + ntsc=TRUE 조합으로
@@ -352,6 +379,7 @@ def export_fcpxml(
     """
     from xml.sax.saxutils import quoteattr
 
+    _require_cfr_handoff(ws)
     m = ws.manifest
     rate_num, rate_den = _frame_rate(m)
     num, den = rate_den, rate_num  # frameDuration = 프레임레이트의 역수
@@ -417,6 +445,7 @@ def export_otio(
     체크포인트마다 소스 구간을 참조하는 클립 + 근거 메타데이터를 담은
     마커(video_agent 네임스페이스)를 싣는다. xmeml과 병행 제공.
     """
+    _require_cfr_handoff(ws)
     try:
         import opentimelineio as otio
     except ImportError:

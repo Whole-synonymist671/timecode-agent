@@ -7,8 +7,15 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .diarization_transaction import (
+    recover_pending_diarization_transaction,
+)
 from .fsio import write_text_atomic
-from .probe import probe
+from .probe import probe, source_stat_fingerprint
+from .workspace_lifecycle import (
+    assert_building_workspace_resume_allowed,
+    assert_ingest_target_unused,
+)
 from .workspace_lock import stable_workspace_lock
 
 # 파일시스템·Obsidian 양쪽에서 문제를 일으키는 문자. `[]#^|`는 경로로는
@@ -62,6 +69,13 @@ _PROBE_FIELDS = (
 )
 # probe()가 항상 남기는 필수 관측 — 하나라도 없으면 절단된 manifest다.
 _PROBE_REQUIRED = ("duration", "width", "height", "fps", "has_audio")
+_REVISION_MARKERS = (
+    "source_content_hash",
+    "source_revision_id",
+    "transcript_revision_id",
+    "timing_revision_id",
+    "revision_schema_version",
+)
 
 
 def _reusable_probe(ws: "Workspace", video: Path) -> dict | None:
@@ -85,9 +99,60 @@ def _reusable_probe(ws: "Workspace", video: Path) -> dict | None:
         stat = video.stat()
     except OSError:
         return None
-    if fingerprint != {"size": stat.st_size, "mtime_ns": stat.st_mtime_ns}:
+    if fingerprint != source_stat_fingerprint(stat):
         return None
     return {key: old[key] for key in _PROBE_FIELDS if key in old}
+
+
+def _workspace_create_state(
+    ws: "Workspace",
+    video: Path,
+) -> tuple[bool, dict | None, bool, bool]:
+    """Classify one manifest while its stable manifest lock is held."""
+    published = ws.manifest_path.is_file()
+    existing = load_json(ws.manifest_path) if published else None
+    if published and not isinstance(existing, dict):
+        raise RuntimeError(
+            "existing workspace manifest is unreadable; preserve it and use a "
+            "fresh output path"
+        )
+    if isinstance(existing, dict) and any(
+        field in existing for field in _REVISION_MARKERS
+    ):
+        raise RuntimeError(
+            "revision-bound workspace already exists; load it or use a fresh "
+            "output path"
+        )
+    building = (
+        isinstance(existing, dict)
+        and existing.get("ingest_state") == "building"
+    )
+    revision_draft = (
+        isinstance(existing, dict)
+        and existing.get("revision_draft") is True
+    )
+    if published and not building and not revision_draft:
+        raise RuntimeError(
+            "legacy workspace already exists and is read-only; load it or use "
+            "a fresh output path"
+        )
+    if revision_draft:
+        assert isinstance(existing, dict)
+        if existing.get("video") != str(video):
+            raise RuntimeError(
+                "current draft belongs to a different source; use a fresh "
+                "output path"
+            )
+        source_stat = existing.get("source_stat")
+        try:
+            current_stat = source_stat_fingerprint(video.stat())
+        except OSError as error:
+            raise RuntimeError("current draft source is unavailable") from error
+        if source_stat != current_stat:
+            raise RuntimeError(
+                "current draft source changed; use a fresh output path"
+            )
+    return published, existing, building, revision_draft
 
 
 class Workspace:
@@ -145,16 +210,23 @@ class Workspace:
         사이드카 부재(구버전 워크스페이스)는 디렉터리 inode 폴백 —
         CLI lease가 그 경우 배타라 covered 중첩으로 안전하다.
         """
+        legacy_operation_lock = not self.workspace_lock_path.is_file()
         with stable_workspace_lock(
-            self.root, self.manifest_lock_path, exclusive=True
+            self.root,
+            self.workspace_lock_path,
+            exclusive=legacy_operation_lock,
+            allow_reentrant_exclusive=legacy_operation_lock,
         ):
-            manifest = self.manifest
-            tools = dict(manifest.get("tools") or {})
-            if tools.get(name) == info:
-                return
-            tools[name] = info
-            manifest["tools"] = tools
-            self.save_manifest(manifest)
+            with stable_workspace_lock(
+                self.root, self.manifest_lock_path, exclusive=True
+            ):
+                manifest = self.manifest
+                tools = dict(manifest.get("tools") or {})
+                if tools.get(name) == info:
+                    return
+                tools[name] = info
+                manifest["tools"] = tools
+                self.save_manifest(manifest)
 
     @property
     def video(self) -> Path:
@@ -165,33 +237,86 @@ class Workspace:
         video = Path(video).resolve()
         root = Path(out) if out else Path.cwd() / "va-out" / video.stem
         ws = cls(root)
-        published = ws.manifest_path.is_file()
-        ws.frames_dir.mkdir(parents=True, exist_ok=True)
-        ws.clips_dir.mkdir(parents=True, exist_ok=True)
-        meta = _reusable_probe(ws, video) if published else None
-        if meta is None:
-            meta = probe(video)
-        if not published:
+        root.mkdir(parents=True, exist_ok=True)
+        if not ws.manifest_path.is_file():
             ws.workspace_lock_path.touch(mode=0o600, exist_ok=True)
             ws.checkpoint_lock_path.touch(mode=0o600, exist_ok=True)
             ws.image_provenance_lock_path.touch(mode=0o600, exist_ok=True)
             ws.sequence_lock_path.touch(mode=0o600, exist_ok=True)
             ws.manifest_lock_path.touch(mode=0o600, exist_ok=True)
-        ws.save_manifest(
-            {
-                "video": str(video),
-                "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                **meta,
-            }
-        )
+        with stable_workspace_lock(
+            ws.root,
+            ws.workspace_lock_path,
+            exclusive=True,
+            allow_reentrant_exclusive=True,
+        ):
+            with stable_workspace_lock(
+                ws.root,
+                ws.manifest_lock_path,
+                exclusive=True,
+            ):
+                published, existing, building, revision_draft = (
+                    _workspace_create_state(ws, video)
+                )
+                if building:
+                    assert isinstance(existing, dict)
+                    assert_building_workspace_resume_allowed(
+                        ws.root,
+                        existing,
+                        video,
+                    )
+                elif not published:
+                    assert_ingest_target_unused(ws.root, video)
+                ws.frames_dir.mkdir(parents=True, exist_ok=True)
+                ws.clips_dir.mkdir(parents=True, exist_ok=True)
+                meta = _reusable_probe(ws, video) if published else None
+                if meta is None:
+                    meta = probe(video)
+                if building:
+                    ws.workspace_lock_path.touch(mode=0o600, exist_ok=True)
+                    ws.checkpoint_lock_path.touch(mode=0o600, exist_ok=True)
+                    ws.image_provenance_lock_path.touch(mode=0o600, exist_ok=True)
+                    ws.sequence_lock_path.touch(mode=0o600, exist_ok=True)
+                manifest = {
+                    "video": str(video),
+                    "created": datetime.now(timezone.utc).isoformat(
+                        timespec="seconds"
+                    ),
+                    **meta,
+                }
+                if building:
+                    assert isinstance(existing, dict)
+                    requested_source = existing.get("ingest_requested_source")
+                    if (
+                        not isinstance(requested_source, str)
+                        or not requested_source
+                    ):
+                        raise RuntimeError(
+                            "incomplete workspace is missing "
+                            "ingest_requested_source"
+                        )
+                    manifest["ingest_state"] = "building"
+                    manifest["ingest_requested_source"] = requested_source
+                elif not published or revision_draft:
+                    manifest["revision_draft"] = True
+                ws.save_manifest(manifest)
         return ws
 
     @classmethod
     def load(cls, root: Path) -> "Workspace":
         ws = cls(Path(root))
+        recover_pending_diarization_transaction(
+            ws.root,
+            ws.workspace_lock_path,
+        )
         if not ws.manifest_path.is_file():
             raise FileNotFoundError(
                 f"va 워크스페이스가 아닙니다 (manifest.json 없음): {ws.root}"
                 " — 경로를 확인하거나 `va ingest`로 먼저 만드십시오"
+            )
+        if ws.manifest.get("ingest_state") == "building":
+            raise RuntimeError(
+                "workspace ingest is incomplete; retry `va ingest` with the "
+                "same source and `-o` path"
             )
         return ws

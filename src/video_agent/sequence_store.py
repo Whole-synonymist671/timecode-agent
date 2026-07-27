@@ -8,6 +8,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from .revision import (
+    RevisionBindingError,
+    bind_record_to_workspace,
+    validate_record_revision,
+)
 from .sequence_grounding import (
     GroundingSnapshot,
     checkpoint_grounding_snapshot,
@@ -19,6 +24,7 @@ from .sequence_schema import (
     SequenceValidationError,
     validate_sequence_object,
 )
+from .temporal import TemporalSpanError, canonicalize_span
 from .workspace import Workspace
 from .workspace_lock import stable_workspace_lock
 
@@ -47,6 +53,7 @@ def _validate_sequence(
     replay: bool = False,
 ) -> dict:
     checkpoints_by_id, unsupported_ids = snapshot
+    obj = _normalize_sequence_record(ws, obj, writing=not replay)
     sequence = validate_sequence_object(
         ws,
         obj,
@@ -71,6 +78,58 @@ def _validate_sequence(
     return sequence
 
 
+def _normalize_sequence_record(
+    ws: Workspace,
+    obj: object,
+    *,
+    writing: bool,
+) -> object:
+    if not isinstance(obj, dict):
+        return obj
+    normalized = (
+        bind_record_to_workspace(ws, obj)
+        if writing
+        else dict(obj)
+    )
+    if not writing:
+        validate_record_revision(ws, normalized)
+    cuts = normalized.get("cuts")
+    if isinstance(cuts, list):
+        normalized["cuts"] = [
+            _normalize_sequence_span(ws, cut)
+            if isinstance(cut, dict)
+            else cut
+            for cut in cuts
+        ]
+    alternatives = normalized.get("alternatives_rejected")
+    if isinstance(alternatives, list):
+        normalized["alternatives_rejected"] = [
+            _normalize_sequence_span(ws, alternative)
+            if isinstance(alternative, dict)
+            else alternative
+            for alternative in alternatives
+        ]
+    return normalized
+
+
+def _normalize_sequence_span(ws: Workspace, value: dict) -> dict:
+    if "span" not in value:
+        return dict(value)
+    normalized = dict(value)
+    try:
+        projected, canonical = canonicalize_span(
+            ws,
+            normalized.get("span"),
+            normalized.get("temporal_span"),
+        )
+    except TemporalSpanError as error:
+        raise SequenceValidationError(str(error)) from None
+    normalized["span"] = projected
+    if canonical is not None:
+        normalized["temporal_span"] = canonical
+    return normalized
+
+
 def _prior_for(obj: object, latest: list[dict]) -> dict | None:
     if not isinstance(obj, dict) or not isinstance(obj.get("id"), str):
         return None
@@ -92,22 +151,29 @@ def validate_sequence(ws: Workspace, obj: object) -> dict:
 
 def append_sequence(ws: Workspace, obj: object) -> dict:
     """Validate and append while sequence and checkpoint snapshots are locked."""
-    with _sequence_lock(ws, exclusive=True):
-        with checkpoint_grounding_snapshot(ws) as snapshot:
-            latest = _load_sequences_unlocked(ws, snapshot)
-            sequence = _validate_sequence(
-                ws,
-                obj,
-                prior=_prior_for(obj, latest),
-                snapshot=snapshot,
-            )
-            path = sequences_path(ws)
-            prefix = "\n" if _missing_trailing_newline(path) else ""
-            with path.open("a", encoding="utf-8") as ledger:
-                ledger.write(
-                    prefix + json.dumps(sequence, ensure_ascii=False) + "\n"
+    legacy_operation_lock = not ws.workspace_lock_path.is_file()
+    with stable_workspace_lock(
+        ws.root,
+        ws.workspace_lock_path,
+        exclusive=legacy_operation_lock,
+        allow_reentrant_exclusive=legacy_operation_lock,
+    ):
+        with _sequence_lock(ws, exclusive=True):
+            with checkpoint_grounding_snapshot(ws) as snapshot:
+                latest = _load_sequences_unlocked(ws, snapshot)
+                sequence = _validate_sequence(
+                    ws,
+                    obj,
+                    prior=_prior_for(obj, latest),
+                    snapshot=snapshot,
                 )
-            return sequence
+                path = sequences_path(ws)
+                prefix = "\n" if _missing_trailing_newline(path) else ""
+                with path.open("a", encoding="utf-8") as ledger:
+                    ledger.write(
+                        prefix + json.dumps(sequence, ensure_ascii=False) + "\n"
+                    )
+                return sequence
 
 
 def _missing_trailing_newline(path: Path) -> bool:
@@ -155,10 +221,17 @@ def _load_sequences_unlocked(
                 replay=True,
             )
             latest[sequence["id"]] = sequence
+        except RevisionBindingError as error:
+            print(
+                "warning: skipping revision-incompatible sequences.jsonl line "
+                f"{line_number}: {error}",
+                file=sys.stderr,
+            )
         except (
             UnicodeDecodeError,
             json.JSONDecodeError,
             SequenceValidationError,
+            TemporalSpanError,
         ):
             print(
                 f"warning: skipping corrupt sequences.jsonl line {line_number}",

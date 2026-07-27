@@ -140,7 +140,10 @@ def _run_with_workspace_leases(args) -> int:
                     # inner ledger writer remains serialized across processes;
                     # new sidecar workspaces keep normal shared operation
                     # concurrency.
-                    exclusive=not workspace.workspace_lock_path.is_file(),
+                    exclusive=(
+                        args.command == "diarize"
+                        or not workspace.workspace_lock_path.is_file()
+                    ),
                 )
             )
             leased_roots.append(workspace.root.resolve())

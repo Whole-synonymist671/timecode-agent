@@ -87,7 +87,7 @@ before any grounded edit is exported.
   [Requirements](#requirements).
 
 All shipped to `main`. The current release is
-[v0.2.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.2.0);
+[v0.3.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.3.0);
 [v0.1.0](https://github.com/mupozg823/timecode-agent/releases/tag/v0.1.0) was
 the first.
 
@@ -303,6 +303,24 @@ va-out/
 └── another-video/
 ```
 
+Ingest publishes source, transcript, and timing revision IDs in the manifest.
+New checkpoints, image-provenance events, sequences, and NLE receipts carry
+that binding. `va ingest` will not overwrite a published workspace or a
+manifest-less directory that already contains durable evidence; use `va brief`
+to resume, or a fresh `-o` path for a new source or transcript generation. If
+the first ingest fails before revision publication, the manifest remains
+`building` and the same source plus `-o` path can be retried safely.
+Seconds remain the CLI display/input surface, while new ledger records also
+store a half-open stream PTS/time-base span. Before a revision-bound NLE
+handoff, the complete decoded video timeline must prove one uniform rational
+cadence, including every frame duration and the final boundary;
+`avg_frame_rate == r_frame_rate` is only a hint. VFR, unknown, or irregular
+timing stays blocked until decoded-frame snapping/export is available.
+Pre-revision workspaces remain readable, but are read-only for new checkpoints,
+image provenance, and sequences; create a fresh ingest workspace before adding
+evidence. A new draft created directly through the current Python API binds its
+source, transcript, and timing on the first evidence write.
+
 `va search "<terms>"` builds an on-demand FTS5 view across workspace
 transcripts, checkpoints, and OCR. `va view` writes a self-contained static
 corpus browser. `va wiki` projects entities, relations, quotes, and scene
@@ -329,6 +347,7 @@ through an exclusive lease on the existing workspace-directory inode.
 | Placement and inspection | `brief` `capture` `keyframes` `audioevents` `diarize` `faces` `ocr` `filmstrip` `highlights` `scenes` |
 | Understanding state | `checkpoint add/list` `status` |
 | Editing and delivery | `sequence add/list` `boundary-eval` `clip` `export` `reframe` |
+| Runtime and configuration | `runtime` |
 
 The same CLI is available as `va` and `tca`.
 
@@ -341,7 +360,9 @@ A few commands are worth a direct mention beyond the table above:
 - `diarize` adds who-spoke-when speaker turns; `--backend auto` prefers the
   gated `pyannote` model when a Hugging Face token is present (environment
   variable or `hf auth login` cache) and otherwise uses the ungated `sherpa`
-  backend.
+  backend. Run it before recording checkpoints or other transcript-dependent
+  evidence: it advances the transcript revision, and is refused once such
+  evidence exists.
 - `boundary-eval` scores a recorded sequence's cut points and joins
   (speech-cut, breath, loudness step) so an edit can be re-snapped before
   export instead of after review.
@@ -358,7 +379,7 @@ the argparse or effective runtime defaults, not documentation guesses.
 |---|---|---|---|
 | `ingest` | `--max-height` | `1080` | URL download resolution cap |
 | `ingest` | `--cookies-from-browser` | none | `chrome`\|`safari`\|`firefox` — pass browser cookies to `yt-dlp` for a login-walled source; only needed when the source requires your own session |
-| `ingest` | `-o`, `--out` | `./va-out/<stem>` (local file) or `./va-out/url-<md5-prefix>` (URL) | workspace directory — always pass it for URLs so the resume path is known in advance |
+| `ingest` | `-o`, `--out` | `./va-out/<stem>` (local file) or `./va-out/url-<md5-prefix>` (URL) | fresh workspace directory — existing manifests or orphaned durable evidence fail closed; always pass it for URLs so the resume path is known in advance |
 | `ingest` | `--model` | `small` | whisper size (`tiny`\|`base`\|`small`\|`medium`\|`large-v3`), or any CTranslate2 model — local path or HF repo id |
 | `ingest` | `--asr-backend` | `auto` | ASR execution path (`auto`\|`faster-whisper`\|`mlx`) — `auto` follows the runtime profile: `balanced`/`quality` = faster-whisper, Apple Silicon `low-power` = MLX with VAD and a quality fallback |
 | `ingest` | `--lang` | auto-detect | e.g. `ko`, `en` |
@@ -640,8 +661,7 @@ va brief va-out/my-video
 va ingest lecture.mp4 --model small --lang ko --signals
 
 # Captions exist but a cut needs word-level timing — transcribe into a
-# FRESH workspace (re-ingesting a populated one would leave its recorded
-# checkpoints attached to a different transcript)
+# FRESH workspace (re-ingesting a populated one is refused before mutation)
 va ingest "https://youtu.be/..." --force-whisper -o va-out/my-video-whisper
 
 # Login-walled source (e.g. Instagram): add --cookies-from-browser chrome
@@ -753,12 +773,13 @@ fixtures, not a source of performance claims either.
 - Only ingest content you have the right to download and analyze. The
   `--cookies-from-browser` option exists for your own authorized sessions —
   never ship credentials in a repository.
-- One workspace per video. Resume with `va brief <workspace>` — re-running
-  `va ingest` into a populated workspace replaces its manifest and
-  transcript while keeping recorded checkpoints and sequences, leaving that
-  evidence attached to a different transcript; use a fresh `-o` path when
-  you need a different transcription. Reclaim space with `va gc` (dry-run
-  by default) rather than deleting files by hand.
+- One workspace per source/transcript revision. Resume with
+  `va brief <workspace>` — re-running `va ingest` into a ready or pre-revision
+  workspace is rejected before manifest or transcript mutation. Only an
+  explicitly incomplete `building` ingest can retry the same source and `-o`
+  path; use a fresh `-o` path for a different source or transcription.
+  Reclaim space with `va gc` (dry-run by default) rather than deleting files
+  by hand.
 
 ## Documentation
 
